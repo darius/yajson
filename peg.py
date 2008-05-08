@@ -105,16 +105,18 @@ def gen(root_peg):
     protos = '\n'.join("""\
 static int %s (Scanner *s, int c);""" % name
                        for peg, name in nameitems)
-    def subgen(peg):
-        if peg in names:
-            return """c = %s (s, c);""" % names[peg]
-        return peg.gen(subgen)
+    class Context:
+        def gen(self, peg):
+            if peg in names:
+                return """c = %s (s, c);""" % names[peg]
+            return peg.gen(self)
+    context = Context()
     functions = '\n\n'.join("""\
 static int %s (Scanner *s, int c) {
   %s
   return c;
 }""" % (name,
-        indent(peg.gen(subgen)))
+        indent(peg.gen(context)))
                             for peg, name in nameitems)
     return """\
 %s
@@ -129,7 +131,7 @@ static int root (Scanner *s, int c) {
   return c;
 }
 
-%s""" % (prelude, protos, functions, indent(root_peg.gen(subgen)), postlude)
+%s""" % (prelude, protos, functions, indent(root_peg.gen(context)), postlude)
 
 def count_em(root_peg):
     seen = set()
@@ -154,7 +156,7 @@ class Recur(Peg):
         self.name     = 'root'    # XXX
     def __str__(self):
         return self.name
-    def gen(self, subgen):
+    def gen(self, context):
         return """c = %s (s, c);""" % self.name
     def has_null(self):
         return self.nullity
@@ -166,8 +168,8 @@ class Seq(Peg):
         self.pegs = map(parse, pegs)
     def __str__(self):
         return '(%s)' % ';'.join(map(str, self.pegs))
-    def gen(self, subgen):
-        return '\n'.join(map(subgen, self.pegs))
+    def gen(self, context):
+        return '\n'.join(map(context.gen, self.pegs))
     def has_null(self):
         return all(peg.has_null() for peg in self.pegs)
     def firsts(self):
@@ -184,7 +186,7 @@ class Literal(Peg):
         self.c = c
     def __str__(self):
         return "'%s'" % self.c
-    def gen(self, subgen):
+    def gen(self, context):
         c_lit = c_literal_char(self.c)
         return ("""if (c != %s) expected (s, %s); c = advance (s);"""
                 % (c_lit, c_lit))
@@ -201,15 +203,15 @@ class StarSep(Peg):
         self.pegs = (self.peg, self.separator)
     def __str__(self):
         return '(%s@%s)' % self.pegs
-    def gen(self, subgen):
+    def gen(self, context):
         return ("""\
 for (;;) {
   %s
   if (!(%s)) break;
   %s
-}""" % (indent(subgen(self.peg)),
+}""" % (indent(context.gen(self.peg)),
         gen_member_test(self.separator.firsts()),
-        indent(subgen(self.separator))))
+        indent(context.gen(self.separator))))
     def has_null(self):
         return False
     def firsts(self):
@@ -221,7 +223,7 @@ class OneOf(Peg):
         self.pegs = map(parse, pegs)
     def __str__(self):
         return '(%s)' % '|'.join(map(str, self.pegs))
-    def gen(self, subgen):
+    def gen(self, context):
         def gen_test(peg):
             if peg.has_null():
                 return '1'
@@ -230,7 +232,7 @@ class OneOf(Peg):
 if (%s) {
   %s
 }""" % (gen_test(peg),
-        indent(subgen(peg)))
+        indent(context.gen(peg)))
                             for peg in self.pegs)
         return """\
 %s
@@ -250,12 +252,12 @@ class Star(Peg):
         self.pegs = (self.peg,)
     def __str__(self):
         return '*(%s)' % self.peg
-    def gen(self, subgen):
+    def gen(self, context):
         return ("""\
 while (%s) {
   %s
 }""" % (gen_member_test(self.peg.firsts()),
-        indent(subgen(self.peg))))
+        indent(context.gen(self.peg))))
     def has_null(self):
         return True
     def firsts(self):
@@ -264,7 +266,7 @@ while (%s) {
 class Epsilon(Peg):
     def __str__(self):
         return '()'
-    def gen(self, subgen):
+    def gen(self, context):
         return ';'
     def has_null(self):
         return True
@@ -275,7 +277,7 @@ class NormalChar(Peg):
     # unich = <any unicode character except '"' or '\' or a control character>
     def __str__(self):
         return 'u'
-    def gen(self, subgen):
+    def gen(self, context):
         return 'c = normal_char (s, c);'
     def has_null(self):
         return False
