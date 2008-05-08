@@ -76,11 +76,13 @@ static const %s charset_table[257] = {
         for i, set_i in enumerate(self.sets):
             if charset == set_i:
                 return i
+        assert all(ord(c) < 256 for c in charset)
         self.sets.append(frozenset(charset))
         return len(self.sets) - 1
 
 prelude = """\
 #include <Python.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -263,16 +265,24 @@ class OneOf(Peg):
                 return context
             # TODO: also subtract out firsts of the preceding pegs
             return context.sprout(peg.firsts())
-        ok = '\nelse '.join("""\
+        branches = ["""\
 if (%s) {
   %s
 }""" % (gen_test(peg),
         indent(subcontext(peg).gen(peg)))
-                            for peg in self.pegs)
-        return """\
-%s
-else
-  c = expected_one_of (s, "XXX");""" % ok  # XXX fill in with self.firsts()
+                    for peg in self.pegs]
+        # XXX fill in with self.firsts():
+        branches.append("""\n  c = expected_one_of (s, "XXX");""")
+        n_possible = len(branches)
+        for i, branch in enumerate(branches):
+            if branch.startswith('if (1)'):
+                if branch == 'if (1) {\n  ;\n}':
+                    n_possible = i
+                else:
+                    n_possible = i + 1
+                break
+        branches = branches[:n_possible]
+        return '\nelse '.join(branches)
     def has_null(self):
         return any(peg.has_null() for peg in self.pegs)
     def firsts(self):
