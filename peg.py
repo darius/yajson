@@ -1,6 +1,22 @@
 import operator
 
-the_prelude = """\
+
+def gen(root_peg):
+    names = gen_names(count_em(root_peg))
+    nameitems = (sorted(names.items(), key=operator.itemgetter(1))
+                 + [(root_peg, 'root')])
+    protos = '\n'.join(gen_prototype(name) for peg, name in nameitems)
+    class Context:
+        def gen(self, peg):
+            if peg in names:
+                return """c = %s (s, c);""" % names[peg]
+            return peg.gen(self)
+    context = Context()
+    functions = '\n\n'.join(gen_function(context, peg, name)
+                            for peg, name in nameitems)
+    return '\n\n'.join([prelude, protos, functions, postlude])
+
+prelude = """\
 #include <Python.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -50,7 +66,19 @@ static int normal_char (Scanner *s, int c) {
     return expected_one_of (s, "<any non-control/non-escape character>");
 }"""
 
-the_postlude = """\
+def gen_prototype(name):
+    return """\
+static int %s (Scanner *s, int c);""" % name
+
+def gen_function(context, peg, name):
+    return """\
+static int %s (Scanner *s, int c) {
+  %s
+  return c;
+}""" % (name,
+        indent(peg.gen(context)))
+
+postlude = """\
 static int parse (const char *string, const char *end) {
   Scanner scanner = { string, string, end, 0 };
   int c = g4 (&scanner, advance (&scanner));  // XXX wired-in JSON grammar production
@@ -96,45 +124,9 @@ void inityajson (void) {
   PyModule_AddObject (module, "ReadError", ReadError);
 }"""
 
-def gen(root_peg):
-    multiples = count_em(root_peg)
-    names = dict((peg, 'g%d' % i) 
-                 for (i, peg) in enumerate(sorted(multiples, key=str)))
-    nameitems = sorted(names.items(),
-                       key=operator.itemgetter(1))
-    protos = '\n'.join("""\
-static int %s (Scanner *s, int c);""" % name
-                       for peg, name in nameitems)
-    class Context:
-        def gen(self, peg):
-            if peg in names:
-                return """c = %s (s, c);""" % names[peg]
-            return peg.gen(self)
-    context = Context()
-    functions = '\n\n'.join("""\
-static int %s (Scanner *s, int c) {
-  %s
-  return c;
-}""" % (name,
-        indent(peg.gen(context)))
-                            for peg, name in nameitems)
-    prelude = the_prelude
-    postlude = the_postlude
-    root_body = indent(root_peg.gen(context))
-    return """\
-%(prelude)s
-
-%(protos)s
-static int root (Scanner *s, int c);
-
-%(functions)s
-
-static int root (Scanner *s, int c) {
-  %(root_body)s
-  return c;
-}
-
-%(postlude)s""" % locals()
+def gen_names(pegs):
+    return dict((peg, 'g%d' % i) 
+                for (i, peg) in enumerate(sorted(pegs, key=str)))
 
 def count_em(root_peg):
     seen = set()
