@@ -1,6 +1,6 @@
 import operator
 
-prelude = """\
+the_prelude = """\
 #include <Python.h>
 #include <ctype.h>
 #include <stdio.h>
@@ -50,7 +50,7 @@ static int normal_char (Scanner *s, int c) {
     return expected_one_of (s, "<any non-control/non-escape character>");
 }"""
 
-postlude = """\
+the_postlude = """\
 static int parse (const char *string, const char *end) {
   Scanner scanner = { string, string, end, 0 };
   int c = g4 (&scanner, advance (&scanner));  // XXX wired-in JSON grammar production
@@ -118,20 +118,23 @@ static int %s (Scanner *s, int c) {
 }""" % (name,
         indent(peg.gen(context)))
                             for peg, name in nameitems)
+    prelude = the_prelude
+    postlude = the_postlude
+    root_body = indent(root_peg.gen(context))
     return """\
-%s
+%(prelude)s
 
-%s
+%(protos)s
 static int root (Scanner *s, int c);
 
-%s
+%(functions)s
 
 static int root (Scanner *s, int c) {
-  %s
+  %(root_body)s
   return c;
 }
 
-%s""" % (prelude, protos, functions, indent(root_peg.gen(context)), postlude)
+%(postlude)s""" % locals()
 
 def count_em(root_peg):
     seen = set()
