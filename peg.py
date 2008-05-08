@@ -6,10 +6,11 @@ def gen(root_peg):
     nameitems = (sorted(names.items(), key=operator.itemgetter(1))
                  + [(root_peg, 'root')])
     protos = '\n'.join(gen_prototype(name) for peg, name in nameitems)
-    context = Context(names, CharTests(), all_chars)
+    char_tests = CharTests()
+    context = Context(names, char_tests, all_chars)
     functions = '\n\n'.join(gen_function(context, peg, name)
                             for peg, name in nameitems)
-    return '\n\n'.join([prelude, protos, functions, postlude])
+    return '\n\n'.join([prelude, char_tests.gen_tables(), protos, functions, postlude])
 
 all_chars = set(map(chr, range(0, 256)))
 
@@ -30,30 +31,46 @@ class Context:
         return self.char_tests.gen_test(charset, self.charset)
 
 class CharTests:
+    def __init__(self):
+        self.sets = []
     def gen_test(self, charset, context_charset):
-        return gen_member_test(charset, context_charset)
-
-def gen_member_test(charset, context_set):
-    if not (charset & context_set):
-        return '0'
-    elif context_set.issubset(charset):
-        return '1'
-    else:
-        # These checks may actually make it worse - CHECKME:
-        if charset == set(' \t\r\n\f'):   # XXX right?
-            return 'isspace (c)'
-        if charset == set('0123456789'):
-            return 'isdigit (c)'
-        if charset == set('0123456789abcdefABCDEF'):
-            return 'isxdigit (c)'
-        tests = ["""c == %s""" % c_literal_char(c)
-                 for c in sorted(charset)]
-        return ' || '.join(tests)
-
+        assert charset.issubset(context_charset) # Um, should I assume this?
+        test_set = charset & context_charset
+        if not test_set:
+            return '0'
+        elif context_charset.issubset(charset):
+            return '1'
+        elif 1 == len(test_set):
+            c = list(test_set)[0]
+            return 'c == %s' % c_literal_char(c)
+        else:
+            return self._gen_test(self._enter_table(charset, context_charset))
+    def gen_tables(self):
+        assert len(self.sets) <= 32
+        bitmasks = map(self._gen_bitmask, range(256))
+        return """\
+static const unsigned charset_table[257] = {
+  0,
+  %s
+};""" % indent('\n'.join(bitmasks))
+    def _gen_bitmask(self, char_index):
+        c = chr(char_index)
+        bitmask = 0
+        for set_index, charset in enumerate(self.sets):
+            if c in charset:
+                bitmask |= 1 << set_index
+        return '0x%08x,' % bitmask
+    def _gen_test(self, set_index):
+        return 'charset_table[c+1] & (1<<%d)' % set_index
+    def _enter_table(self, charset, context_charset):
+        for i, set_i in enumerate(self.sets):
+            if charset == set_i:
+                return i
+        self.sets.append(frozenset(charset))
+        return len(self.sets) - 1
 
 prelude = """\
 #include <Python.h>
-#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -67,7 +84,7 @@ typedef struct {
 } Scanner;
 
 static int advance (Scanner *s) {
-  if (s->here == s->end) return EOF;
+  if (s->here == s->end) return -1;
   return 0xFF & *s->here++;
 }
 
@@ -82,7 +99,7 @@ static int expected (Scanner *s, int c) {
                   s->here - s->start, c);
     fail (s);
   }
-  return EOF;
+  return -1;
 }
 
 static int expected_one_of (Scanner *s, const char *charset) {
@@ -91,7 +108,7 @@ static int expected_one_of (Scanner *s, const char *charset) {
                   s->here - s->start, charset);
     fail (s);
   }
-  return EOF;
+  return -1;
 }
 
 static int normal_char (Scanner *s, int c) {
@@ -119,7 +136,7 @@ static int parse (const char *string, const char *end) {
   int c = g4 (&scanner, advance (&scanner));  // XXX wired-in JSON grammar production
   c = root (&scanner, c);
   c = g4 (&scanner, c);  // XXX wired-in JSON grammar production
-  if (c != EOF) {
+  if (c != -1) {
     PyErr_Format (ReadError, "At byte offset %d, stuff left over", 
                   scanner.here - scanner.start);
     fail (&scanner);
