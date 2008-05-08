@@ -1,6 +1,6 @@
 all: yajson.so
 
-test:
+test: all
 	python testme.py
 	python checkme.py
 
