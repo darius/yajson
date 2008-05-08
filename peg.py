@@ -6,7 +6,7 @@ def gen(root_peg):
     nameitems = (sorted(names.items(), key=operator.itemgetter(1))
                  + [(root_peg, 'root')])
     protos = '\n'.join(gen_prototype(name) for peg, name in nameitems)
-    context = Context(names, all_chars)
+    context = Context(names, CharTests(), all_chars)
     functions = '\n\n'.join(gen_function(context, peg, name)
                             for peg, name in nameitems)
     return '\n\n'.join([prelude, protos, functions, postlude])
@@ -14,9 +14,10 @@ def gen(root_peg):
 all_chars = set(map(chr, range(0, 256)))
 
 class Context:
-    def __init__(self, names, charset):
-        self.names   = names
-        self.charset = charset
+    def __init__(self, names, char_tests, charset):
+        self.names      = names
+        self.char_tests = char_tests
+        self.charset    = charset
     def gen(self, peg):
         if peg in self.names:
             return """c = %s (s, c);""" % self.names[peg]
@@ -24,7 +25,31 @@ class Context:
     def get_possible_leading_chars(self):
         return self.charset
     def sprout(self, charset):
-        return Context(self.names, charset)
+        return Context(self.names, self.char_tests, charset)
+    def gen_member_test(self, charset):
+        return self.char_tests.gen_test(charset, self.charset)
+
+class CharTests:
+    def gen_test(self, charset, context_charset):
+        return gen_member_test(charset, context_charset)
+
+def gen_member_test(charset, context_set):
+    if not (charset & context_set):
+        return '0'
+    elif context_set.issubset(charset):
+        return '1'
+    else:
+        # These checks may actually make it worse - CHECKME:
+        if charset == set(' \t\r\n\f'):   # XXX right?
+            return 'isspace (c)'
+        if charset == set('0123456789'):
+            return 'isdigit (c)'
+        if charset == set('0123456789abcdefABCDEF'):
+            return 'isxdigit (c)'
+        tests = ["""c == %s""" % c_literal_char(c)
+                 for c in sorted(charset)]
+        return ' || '.join(tests)
+
 
 prelude = """\
 #include <Python.h>
@@ -208,7 +233,7 @@ class OneOf(Peg):
         def gen_test(peg):
             if peg.has_null():
                 return '1'
-            return gen_member_test(peg.firsts(), context)
+            return context.gen_member_test(peg.firsts())
         def subcontext(peg):
             if peg.has_null():
                 return context
@@ -265,7 +290,7 @@ class Star(Peg):
         return ("""\
 while (%s) {
   %s
-}""" % (gen_member_test(self.peg.firsts(), context),
+}""" % (context.gen_member_test(self.peg.firsts()),
         indent(context.gen(self.peg))))
     def has_null(self):
         return True
@@ -288,7 +313,7 @@ for (;;) {
   if (!(%s)) break;
   %s
 }""" % (indent(context.gen(self.peg)),
-        gen_member_test(self.separator.firsts(), context),
+        context.gen_member_test(self.separator.firsts()),
         indent(context.gen(self.separator))))
     def has_null(self):
         return False
@@ -346,24 +371,6 @@ def c_literal_char(c):
         return r"(0xFF & '\x%02x')" % ord(c)
     else:
         return "'%s'" % c
-
-def gen_member_test(charset, context):
-    context_set = context.get_possible_leading_chars()
-    if not (charset & context_set):
-        return '0'
-    elif context_set.issubset(charset):
-        return '1'
-    else:
-        # These checks may actually make it worse - CHECKME:
-        if charset == set(' \t\r\n\f'):   # XXX right?
-            return 'isspace (c)'
-        if charset == set('0123456789'):
-            return 'isdigit (c)'
-        if charset == set('0123456789abcdefABCDEF'):
-            return 'isxdigit (c)'
-        tests = ["""c == %s""" % c_literal_char(c)
-                 for c in sorted(charset)]
-        return ' || '.join(tests)
 
 def indent(string):
     return string.replace('\n', '\n  ')
