@@ -6,15 +6,25 @@ def gen(root_peg):
     nameitems = (sorted(names.items(), key=operator.itemgetter(1))
                  + [(root_peg, 'root')])
     protos = '\n'.join(gen_prototype(name) for peg, name in nameitems)
-    class Context:
-        def gen(self, peg):
-            if peg in names:
-                return """c = %s (s, c);""" % names[peg]
-            return peg.gen(self)
-    context = Context()
+    context = Context(names, all_chars)
     functions = '\n\n'.join(gen_function(context, peg, name)
                             for peg, name in nameitems)
     return '\n\n'.join([prelude, protos, functions, postlude])
+
+all_chars = set(map(chr, range(0, 256)))
+
+class Context:
+    def __init__(self, names, charset):
+        self.names   = names
+        self.charset = charset
+    def gen(self, peg):
+        if peg in self.names:
+            return """c = %s (s, c);""" % self.names[peg]
+        return peg.gen(self)
+    def get_possible_leading_chars(self):
+        return self.charset
+    def sprout(self, charset):
+        return Context(self.names, charset)
 
 prelude = """\
 #include <Python.h>
@@ -158,22 +168,15 @@ class Recur(Peg):
     def firsts(self):
         return self.firstset
 
-class Seq(Peg):
-    def __init__(self, *pegs):
-        self.pegs = map(parse, pegs)
+class Epsilon(Peg):
     def __str__(self):
-        return '(%s)' % ';'.join(map(str, self.pegs))
+        return '()'
     def gen(self, context):
-        return '\n'.join(map(context.gen, self.pegs))
+        return ';'
     def has_null(self):
-        return all(peg.has_null() for peg in self.pegs)
+        return True
     def firsts(self):
-        f = set()
-        for peg in self.pegs:
-            f |= peg.firsts()
-            if not peg.has_null():
-                break
-        return f
+        return set()
 
 class Literal(Peg):
     def __init__(self, c):
@@ -182,6 +185,8 @@ class Literal(Peg):
     def __str__(self):
         return "'%s'" % self.c
     def gen(self, context):
+        if set(self.c) == context.get_possible_leading_chars():
+            return """c = advance (s);"""
         c_lit = c_literal_char(self.c)
         return ("""if (c != %s) expected (s, %s); c = advance (s);"""
                 % (c_lit, c_lit))
@@ -190,27 +195,7 @@ class Literal(Peg):
     def firsts(self):
         return set(self.c)
 
-class StarSep(Peg):
-    def __init__(self, peg, separator):
-        self.peg = parse(peg)
-        self.separator = parse(separator)
-        assert not self.separator.has_null()
-        self.pegs = (self.peg, self.separator)
-    def __str__(self):
-        return '(%s@%s)' % self.pegs
-    def gen(self, context):
-        return ("""\
-for (;;) {
-  %s
-  if (!(%s)) break;
-  %s
-}""" % (indent(context.gen(self.peg)),
-        gen_member_test(self.separator.firsts()),
-        indent(context.gen(self.separator))))
-    def has_null(self):
-        return False
-    def firsts(self):
-        return Seq(self.peg, self.separator).firsts()
+import pdb
 
 class OneOf(Peg):
     def __init__(self, *pegs):
@@ -219,15 +204,21 @@ class OneOf(Peg):
     def __str__(self):
         return '(%s)' % '|'.join(map(str, self.pegs))
     def gen(self, context):
+        #pdb.set_trace()
         def gen_test(peg):
             if peg.has_null():
                 return '1'
-            return gen_member_test(peg.firsts())
+            return gen_member_test(peg.firsts(), context)
+        def subcontext(peg):
+            if peg.has_null():
+                return context
+            # TODO: also subtract out firsts of the preceding pegs
+            return context.sprout(peg.firsts())
         ok = '\nelse '.join("""\
 if (%s) {
   %s
 }""" % (gen_test(peg),
-        indent(context.gen(peg)))
+        indent(subcontext(peg).gen(peg)))
                             for peg in self.pegs)
         return """\
 %s
@@ -241,6 +232,29 @@ else
             f |= peg.firsts()
         return f
 
+class Seq(Peg):
+    def __init__(self, *pegs):
+        self.pegs = map(parse, pegs)
+    def __str__(self):
+        return '(%s)' % ';'.join(map(str, self.pegs))
+    def gen(self, context):
+        stmts = []
+        c = context
+        for peg in self.pegs:
+            stmts.append(c.gen(peg))
+            # TODO: follow-sets can be narrower than all_chars
+            c = context.sprout(all_chars)
+        return '\n'.join(stmts)
+    def has_null(self):
+        return all(peg.has_null() for peg in self.pegs)
+    def firsts(self):
+        f = set()
+        for peg in self.pegs:
+            f |= peg.firsts()
+            if not peg.has_null():
+                break
+        return f
+
 class Star(Peg):
     def __init__(self, peg):
         self.peg = parse(peg)
@@ -251,22 +265,35 @@ class Star(Peg):
         return ("""\
 while (%s) {
   %s
-}""" % (gen_member_test(self.peg.firsts()),
+}""" % (gen_member_test(self.peg.firsts(), context),
         indent(context.gen(self.peg))))
     def has_null(self):
         return True
     def firsts(self):
         return self.peg.firsts()
 
-class Epsilon(Peg):
+class StarSep(Peg):
+    def __init__(self, peg, separator):
+        self.peg = parse(peg)
+        self.separator = parse(separator)
+        assert not self.separator.has_null()
+        self.pegs = (self.peg, self.separator)
     def __str__(self):
-        return '()'
+        return '(%s@%s)' % self.pegs
     def gen(self, context):
-        return ';'
+        context = context.sprout(all_chars)
+        return ("""\
+for (;;) {
+  %s
+  if (!(%s)) break;
+  %s
+}""" % (indent(context.gen(self.peg)),
+        gen_member_test(self.separator.firsts(), context),
+        indent(context.gen(self.separator))))
     def has_null(self):
-        return True
+        return False
     def firsts(self):
-        return set()
+        return Seq(self.peg, self.separator).firsts()
 
 class NormalChar(Peg):
     # unich = <any unicode character except '"' or '\' or a control character>
@@ -320,9 +347,12 @@ def c_literal_char(c):
     else:
         return "'%s'" % c
 
-def gen_member_test(charset):
-    if 0 == len(charset):
+def gen_member_test(charset, context):
+    context_set = context.get_possible_leading_chars()
+    if not (charset & context_set):
         return '0'
+    elif context_set.issubset(charset):
+        return '1'
     else:
         # These checks may actually make it worse - CHECKME:
         if charset == set(' \t\r\n\f'):   # XXX right?
