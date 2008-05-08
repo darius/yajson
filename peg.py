@@ -43,16 +43,26 @@ class CharTests:
         elif 1 == len(test_set):
             c = list(test_set)[0]
             return 'c == %s' % c_literal_char(c)
+        elif charset == set('0123456789'):
+            return 'isdigit (c)'
+        elif charset == set('0123456789abcdefABCDEF'):
+            return 'isxdigit (c)'
         else:
             return self._gen_test(self._enter_table(charset, context_charset))
     def gen_tables(self):
         assert len(self.sets) <= 32
+        if len(self.sets) <= 8:
+            type = 'unsigned char'
+        elif len(self.sets) <= 16:
+            type = 'unsigned short'
+        else:
+            type = 'unsigned'
         bitmasks = map(self._gen_bitmask, range(256))
         return """\
-static const unsigned charset_table[257] = {
+static const %s charset_table[257] = {
   0,
   %s
-};""" % indent('\n'.join(bitmasks))
+};""" % (type, indent('\n'.join(bitmasks)))
     def _gen_bitmask(self, char_index):
         c = chr(char_index)
         bitmask = 0
@@ -237,8 +247,6 @@ class Literal(Peg):
     def firsts(self):
         return set(self.c)
 
-import pdb
-
 class OneOf(Peg):
     def __init__(self, *pegs):
         assert 0 < len(pegs)
@@ -246,7 +254,6 @@ class OneOf(Peg):
     def __str__(self):
         return '(%s)' % '|'.join(map(str, self.pegs))
     def gen(self, context):
-        #pdb.set_trace()
         def gen_test(peg):
             if peg.has_null():
                 return '1'
