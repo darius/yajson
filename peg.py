@@ -269,7 +269,8 @@ class OneOf(Peg):
         if context_set:
             # XXX fill in with self.firsts():
             cs = frozenset(context_set)
-            branches.append((cs, cs, """c = expected_one_of (s, "XXX");"""))
+            branches.append((cs, cs, ('c = expected_one_of (s, %s);'
+                                      % c_string_literal(sorted(self.firsts())))))
         return branches
     def has_null(self):
         return any(peg.has_null() for peg in self.pegs)
@@ -416,6 +417,9 @@ def c_char_literal(c):
     if esc.startswith(r'\x'):
         return r"(0xFF & '%s')" % esc
     return r"'%s'" % esc
+
+def c_string_literal(s):
+    return '"%s"' % ''.join(c_escape(c, '"') for c in s)
 
 c_escape_table = {
     '\\': '\\',
