@@ -256,38 +256,41 @@ class OneOf(Peg):
     def __str__(self):
         return '(%s)' % '|'.join(map(str, self.pegs))
     def gen(self, context):
-        return gen_cond(self._gen_branches(context))
+        return gen_switch(context, self._gen_branches(context))
     def _gen_branches(self, context):
         # context_set tracks the possible characters that have not
         # already been checked for.
         context_set = set(context.get_possible_leading_chars())
         def gen_branch(peg):
+            cs = frozenset(context_set)
             if peg.has_null():
-                return ('1', context.gen(peg))
+                return (cs, cs, context.gen(peg))
             f = peg.firsts()
-            branch = (context.gen_member_test(f),
-                      context.sprout(f & context_set).gen(peg))
+            branch = (cs, f, context.sprout(f & cs).gen(peg))
             context_set.difference_update(f)
             return branch
         branches = map(gen_branch, self.pegs)
         if context_set:
             # XXX fill in with self.firsts():
-            branches.append(('1', """c = expected_one_of (s, "XXX");"""))
+            cs = frozenset(context_set)
+            branches.append((cs, cs, """c = expected_one_of (s, "XXX");"""))
         return branches
     def has_null(self):
         return any(peg.has_null() for peg in self.pegs)
     def firsts(self):
-        f = set()
-        for peg in self.pegs:
-            f |= peg.firsts()
-        return f
+        return union(peg.firsts() for peg in self.pegs)
 
-def gen_cond(branches):
-    # N.B. We assume the tests are known to be exhaustive, in the
-    # context where they appear.
+def union(sets):
+    result = set()
+    for s in sets:
+        result |= s
+    return result
+
+def gen_switch(context, branches):
+    # N.B. We assume the tests are known to be exhaustive in the given context.
     n_possible = len(branches)
-    for i, (test, stmts) in enumerate(branches):
-        if test == '1':
+    for i, (context_set, charset, stmts) in enumerate(branches):
+        if context_set.issubset(charset):
             if stmts == ';':
                 n_possible = i
             else:
@@ -296,13 +299,19 @@ def gen_cond(branches):
     branches = branches[:n_possible]
     if not branches:
         return ';'
-    elif 1 == len(set(stmts for (test, stmts) in branches)):
-        test = ' || '.join(test for (test, stmts) in branches)
-        return gen_if(test, branches[0][1])
+    elif 1 == len(set(stmts for (_, _, stmts) in branches)):
+        charset = union(charset for _, charset, _ in branches)
+        test = context.gen_member_test(charset)
+        _, _, body = branches[0]
+        return gen_if(test, body)
     else:
-        return '\nelse '.join(gen_if(test, stmts) for (test, stmts) in branches)
+        return '\nelse '.join(gen_if(context.sprout(context_set).gen_member_test(charset),
+                                     stmts)
+                              for (context_set, charset, stmts) in branches)
 
 def gen_if(test, stmts):
+    if test == '1':
+        return '{\n  %s\n}' % indent(stmts)
     return """\
 if (%s) {
   %s
