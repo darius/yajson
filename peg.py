@@ -42,7 +42,7 @@ class CharTests:
             return '1'
         elif 1 == len(test_set):
             c = list(test_set)[0]
-            return 'c == %s' % c_literal_char(c)
+            return 'c == %s' % c_char_literal(c)
         elif charset == set('0123456789'):
             return 'isdigit (c)'
         elif charset == set('0123456789abcdefABCDEF'):
@@ -237,7 +237,7 @@ class Literal(Peg):
     def gen(self, context):
         if set(self.c) == context.get_possible_leading_chars():
             return """c = advance (s);"""
-        c_lit = c_literal_char(self.c)
+        c_lit = c_char_literal(self.c)
         return ("""if (c != %s) expected (s, %s); c = advance (s);"""
                 % (c_lit, c_lit))
     def has_null(self):
@@ -411,25 +411,33 @@ def one_of(pegs):
     return OneOf(*pegs)
 
 
+def c_char_literal(c):
+    esc = c_escape(c, "'")
+    if esc.startswith(r'\x'):
+        return r"(0xFF & '%s')" % esc
+    return r"'%s'" % esc
+
 c_escape_table = {
-    "'":  "'",
     '\\': '\\',
+    '\a': 'a',
     '\b': 'b',
     '\f': 'f',
     '\n': 'n',
     '\r': 'r',
     '\t': 't',
-    # XXX anything else?
+    '\v': 'v',
     }
-def c_literal_char(c):
+def c_escape(c, delimiter):
     assert 1 == len(c)
+    if c == delimiter:
+        return '\\' + c
     if c in c_escape_table:
-        return r"'\%s'" % c_escape_table[c]
+        return '\\' + c_escape_table[c]
     elif ord(c) < 32 or 127 <= ord(c):
         assert ord(c) <= 255
-        return r"(0xFF & '\x%02x')" % ord(c)
+        return '\\x%02x' % ord(c)
     else:
-        return "'%s'" % c
+        return c
 
 def indent(string):
     return string.replace('\n', '\n  ')
