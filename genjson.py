@@ -1,5 +1,11 @@
-from peg import Recur, Star, OneOf, Seq, Maybe, StarSep, NormalChar, gen
+from peg import Recur, Star, OneOf, Seq, Maybe, StarSep, gen
 
+
+normal_chars = set(chr(i) for i in range(32, 256))
+normal_chars.remove('"')
+normal_chars.remove('\\')
+normal_chars.remove(chr(127))      # I think this counts as a control character
+normal_chars = list(sorted(normal_chars))
 
 value   = Recur(False, '{["-0123456789tfn')
 
@@ -14,7 +20,7 @@ number  = Seq(Maybe('-'),
 
 hexdig  = OneOf(*'0123456789abcdefABCDEF')
 escseq  = OneOf('"\\/bfnrt', Seq('u', hexdig, hexdig, hexdig, hexdig))
-ch      = OneOf(NormalChar(), Seq('\\', escseq))
+ch      = OneOf(*(normal_chars + [Seq('\\', escseq)]))
 jstring = Seq('"', Star(ch), '"')
 
 jarray  = Seq('[', w, Maybe(StarSep(Seq(value, w), Seq(',', w))), ']')

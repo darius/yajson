@@ -121,13 +121,6 @@ static int expected_one_of (Scanner *s, const char *charset) {
     fail (s);
   }
   return -1;
-}
-
-static int normal_char (Scanner *s, int c) {
-  if (32 <= c && c != '"' && c != '\\\\')
-    return advance (s);
-  else
-    return expected_one_of (s, "<any non-control/non-escape character>");
 }"""
 
 def gen_prototype(name):
@@ -400,21 +393,6 @@ for (;;) {
         return False
     def firsts(self):
         return Seq(self.peg, self.separator).firsts()
-
-class NormalChar(Peg):
-    # unich = <any unicode character except '"' or '\' or a control character>
-    def __str__(self):
-        return 'u'
-    def gen(self, context):
-        return 'c = normal_char (s, c);'
-    def has_null(self):
-        return False
-    def firsts(self):
-        f = set(chr(i) for i in range(32, 256))
-        f.remove('"')
-        f.remove('\\')
-        f.remove(chr(127))      # I think this counts as a control character
-        return f
 
 
 def Maybe(peg):
