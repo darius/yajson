@@ -34,7 +34,7 @@ class CharTests:
     def __init__(self):
         self.sets = []
     def gen_test(self, charset, context_charset):
-        assert charset.issubset(context_charset) # Um, should I assume this?
+        assert charset.issubset(context_charset)
         test_set = charset & context_charset
         if not test_set:
             return '0'
@@ -256,33 +256,24 @@ class OneOf(Peg):
     def __str__(self):
         return '(%s)' % '|'.join(map(str, self.pegs))
     def gen(self, context):
-        def gen_test(peg):
+        return gen_cond(self._gen_branches(context))
+    def _gen_branches(self, context):
+        # context_set tracks the possible characters that have not
+        # already been checked for.
+        context_set = set(context.get_possible_leading_chars())
+        def gen_branch(peg):
             if peg.has_null():
-                return '1'
-            return context.gen_member_test(peg.firsts())
-        def subcontext(peg):
-            if peg.has_null():
-                return context
-            # TODO: also subtract out firsts of the preceding pegs
-            return context.sprout(peg.firsts())
-        branches = ["""\
-if (%s) {
-  %s
-}""" % (gen_test(peg),
-        indent(subcontext(peg).gen(peg)))
-                    for peg in self.pegs]
-        # XXX fill in with self.firsts():
-        branches.append("""\n  c = expected_one_of (s, "XXX");""")
-        n_possible = len(branches)
-        for i, branch in enumerate(branches):
-            if branch.startswith('if (1)'):
-                if branch == 'if (1) {\n  ;\n}':
-                    n_possible = i
-                else:
-                    n_possible = i + 1
-                break
-        branches = branches[:n_possible]
-        return '\nelse '.join(branches)
+                return ('1', context.gen(peg))
+            f = peg.firsts()
+            branch = (context.gen_member_test(f),
+                      context.sprout(f & context_set).gen(peg))
+            context_set.difference_update(f)
+            return branch
+        branches = map(gen_branch, self.pegs)
+        if context_set:
+            # XXX fill in with self.firsts():
+            branches.append(('1', """c = expected_one_of (s, "XXX");"""))
+        return branches
     def has_null(self):
         return any(peg.has_null() for peg in self.pegs)
     def firsts(self):
@@ -290,6 +281,32 @@ if (%s) {
         for peg in self.pegs:
             f |= peg.firsts()
         return f
+
+def gen_cond(branches):
+    # N.B. We assume the tests are known to be exhaustive, in the
+    # context where they appear.
+    n_possible = len(branches)
+    for i, (test, stmts) in enumerate(branches):
+        if test == '1':
+            if stmts == ';':
+                n_possible = i
+            else:
+                n_possible = i + 1
+            break
+    branches = branches[:n_possible]
+    if not branches:
+        return ';'
+    elif 1 == len(set(stmts for (test, stmts) in branches)):
+        test = ' || '.join(test for (test, stmts) in branches)
+        return gen_if(test, branches[0][1])
+    else:
+        return '\nelse '.join(gen_if(test, stmts) for (test, stmts) in branches)
+
+def gen_if(test, stmts):
+    return """\
+if (%s) {
+  %s
+}""" % (test, indent(stmts))
 
 class Seq(Peg):
     def __init__(self, *pegs):
