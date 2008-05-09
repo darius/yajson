@@ -347,11 +347,12 @@ class Star(Peg):
     def __str__(self):
         return '*(%s)' % self.peg
     def gen(self, context):
+        f = self.peg.firsts()
         return ("""\
 while (%s) {
   %s
-}""" % (context.gen_member_test(self.peg.firsts()),
-        indent(context.gen(self.peg))))
+}""" % (context.gen_member_test(f),
+        indent(context.sprout(f).gen(self.peg))))
     def has_null(self):
         return True
     def firsts(self):
@@ -367,14 +368,15 @@ class StarSep(Peg):
         return '(%s@%s)' % self.pegs
     def gen(self, context):
         context = context.sprout(all_chars)
+        sf = self.separator.firsts()
         return ("""\
 for (;;) {
   %s
   if (!(%s)) break;
   %s
 }""" % (indent(context.gen(self.peg)),
-        context.gen_member_test(self.separator.firsts()),
-        indent(context.gen(self.separator))))
+        context.gen_member_test(sf),
+        indent(context.sprout(sf).gen(self.separator))))
     def has_null(self):
         return False
     def firsts(self):
