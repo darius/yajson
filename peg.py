@@ -145,9 +145,9 @@ static int %s (Scanner *s, int c) {
 postlude = """\
 static int parse (const char *string, const char *end) {
   Scanner scanner = { string, string, end, 0 };
-  int c = g4 (&scanner, advance (&scanner));  // XXX wired-in JSON grammar production
+  int c = g2 (&scanner, advance (&scanner));  // XXX wired-in JSON grammar production
   c = root (&scanner, c);
-  c = g4 (&scanner, c);  // XXX wired-in JSON grammar production
+  c = g2 (&scanner, c);  // XXX wired-in JSON grammar production
   if (c != -1) {
     PyErr_Format (ReadError, "At byte offset %d, stuff left over", 
                   scanner.here - scanner.start);
@@ -189,6 +189,7 @@ void inityajson (void) {
 }"""
 
 def gen_names(pegs):
+    pegs = [peg for peg in pegs if not peg.is_trivial()]
     return dict((peg, 'g%d' % i) 
                 for (i, peg) in enumerate(sorted(pegs, key=str)))
 
@@ -207,6 +208,8 @@ def count_em(root_peg):
 
 class Peg:
     pegs = ()
+    def is_trivial(self):
+        return all(isinstance(peg, Literal) for peg in self.pegs)
 
 class Recur(Peg):
     def __init__(self, nullity, firstset):
@@ -288,34 +291,46 @@ def union(sets):
 
 def gen_switch(context, branches):
     # N.B. We assume the tests are known to be exhaustive in the given context.
-    n_possible = len(branches)
-    for i, (context_set, charset, stmts) in enumerate(branches):
-        if context_set.issubset(charset):
-            if stmts == ';':
-                n_possible = i
-            else:
-                n_possible = i + 1
-            break
-    branches = branches[:n_possible]
+    branches = truncate(collapse(branches))
     if not branches:
         return ';'
-    elif 1 == len(set(stmts for (_, _, stmts) in branches)):
-        charset = union(charset for _, charset, _ in branches)
-        test = context.gen_member_test(charset)
-        _, _, body = branches[0]
-        return gen_if(test, body)
-    else:
-        return '\nelse '.join(gen_if(context.sprout(context_set).gen_member_test(charset),
-                                     stmts)
-                              for (context_set, charset, stmts) in branches)
+    return '\nelse '.join(gen_if(context.sprout(context_set).gen_member_test(charset),
+                                 stmts)
+                          for (context_set, charset, stmts) in branches)
+
+def truncate(branches):
+    result = []
+    for context_set, charset, stmts in branches:
+        always_taken = context_set.issubset(charset)
+        if not always_taken or stmts != ';':
+            result.append((context_set, charset, stmts))
+        if always_taken:
+            break
+    return result
+
+def collapse(branches):
+    result = []
+    prev_stmts = None
+    for context_set, charset, stmts in branches:
+        if stmts == prev_stmts:
+            prev_context_set, prev_charset, _ = result[-1]
+            result[-1] = prev_context_set, prev_charset | charset, prev_stmts
+        else:
+            result.append((context_set, charset, stmts))
+            prev_stmts = stmts
+    return result
 
 def gen_if(test, stmts):
+    stmts = embrace(stmts)
     if test == '1':
-        return '{\n  %s\n}' % indent(stmts)
-    return """\
-if (%s) {
-  %s
-}""" % (test, indent(stmts))
+        return stmts
+    return 'if (%s) %s' % (test, stmts)
+
+def embrace(stmts):
+    # XXX why is this a bug? --
+    #if stmts.startswith('{') and stmts.endswith('}'):
+    #    return stmts
+    return '{\n  %s\n}' % indent(stmts)
 
 class Seq(Peg):
     def __init__(self, *pegs):
@@ -346,6 +361,8 @@ class Star(Peg):
         self.pegs = (self.peg,)
     def __str__(self):
         return '*(%s)' % self.peg
+    def is_trivial(self):
+        return False
     def gen(self, context):
         f = self.peg.firsts()
         return ("""\
@@ -366,6 +383,8 @@ class StarSep(Peg):
         self.pegs = (self.peg, self.separator)
     def __str__(self):
         return '(%s@%s)' % self.pegs
+    def is_trivial(self):
+        return False
     def gen(self, context):
         context = context.sprout(all_chars)
         sf = self.separator.firsts()
