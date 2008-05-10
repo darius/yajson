@@ -43,10 +43,17 @@ class CharTests:
         elif 1 == len(test_set):
             c = list(test_set)[0]
             return 'c == %s' % c_char_literal(c)
+        elif 1 == len(context_charset - charset):
+            inverse = context_charset - charset
+            c = list(inverse)[0]
+            return 'c != %s' % c_char_literal(c)
         elif charset == set('0123456789'):
             return 'isdigit (c)'
         elif charset == set('0123456789abcdefABCDEF'):
             return 'isxdigit (c)'
+        elif get_nonempty_range(charset):
+            # XXX I'm not sure this is an actual improvement:
+            return gen_range_test(get_nonempty_range(charset))
         else:
             return self._gen_test(self._enter_table(charset, context_charset))
     def gen_tables(self):
@@ -69,7 +76,7 @@ static const %s charset_table[257] = {
         for set_index, charset in enumerate(self.sets):
             if c in charset:
                 bitmask |= 1 << set_index
-        return '0x%08x,' % bitmask
+        return '0x%0*x,' % ((len(self.sets) + 3) >> 2, bitmask)
     def _gen_test(self, set_index):
         return 'charset_table[c+1] & (1<<%d)' % set_index
     def _enter_table(self, charset, context_charset):
@@ -79,6 +86,20 @@ static const %s charset_table[257] = {
         assert all(ord(c) < 256 for c in charset)
         self.sets.append(frozenset(charset))
         return len(self.sets) - 1
+
+def get_nonempty_range(charset):
+    if not charset:
+        return None
+    vs = map(ord, sorted(charset))
+    lo, hi = vs[0], vs[-1]
+    if hi + 1 - lo == len(charset):
+        return lo, hi + 1
+    return None
+
+def gen_range_test((lo, hibound)):
+    # TODO: generate a > test when hibound == 256
+    return '(unsigned)(c - %u) < %u' % (lo, hibound - lo)
+    
 
 prelude = """\
 #include <Python.h>
@@ -252,7 +273,7 @@ class OneOf(Peg):
     def __str__(self):
         return '(%s)' % '|'.join(map(str, self.pegs))
     def gen(self, context):
-        return gen_switch(context, self._gen_branches(context))
+        return gen_dispatch(context, self._gen_branches(context))
     def _gen_branches(self, context):
         # context_set tracks the possible characters that have not
         # already been checked for.
@@ -283,16 +304,31 @@ def union(sets):
         result |= s
     return result
 
-def gen_switch(context, branches):
+def gen_dispatch(context, branches):
+    """Generate an if...else-if chain."""
     # N.B. We assume the tests are known to be exhaustive in the given context.
     branches = truncate(collapse(branches))
-    if not branches:
+    if len(branches) == 0:
         return ';'
-    return '\nelse '.join(gen_if(context.sprout(context_set).gen_member_test(charset),
-                                 stmts)
-                          for (context_set, charset, stmts) in branches)
+    elif len(branches) <= 3:
+        return '\nelse '.join(gen_if(context.sprout(context_set).gen_member_test(charset),
+                                     stmts)
+                              for (context_set, charset, stmts) in branches)
+    else:
+        return """\
+switch (c) {
+  %s
+}""" % indent('\n'.join(gen_case(context, branch) for branch in branches))
+
+def gen_case(context, (context_set, charset, stmts)):
+    if context_set.issubset(charset):
+        label = 'default:'
+    else:
+        label = '\n'.join('case %s:' % c_char_literal(c) for c in sorted(charset))
+    return '%s\n  %s\n  break;' % (label, indent(stmts))
 
 def truncate(branches):
+    """Remove any branches that are always preempted by earlier branches."""
     result = []
     for context_set, charset, stmts in branches:
         always_taken = context_set.issubset(charset)
@@ -303,6 +339,7 @@ def truncate(branches):
     return result
 
 def collapse(branches):
+    """Combine adjacent branches that share the same body."""
     result = []
     prev_stmts = None
     for context_set, charset, stmts in branches:
