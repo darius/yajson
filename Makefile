@@ -13,4 +13,4 @@ yajson.so: buildyajson.py yajson.c
 
 clean:
 	rm -rf build
-	rm -f *~ *.pyc yajson.so
+	rm -f *~ *.pyc *.so
