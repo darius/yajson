@@ -152,9 +152,9 @@ postlude = """\
 static int parse (const u8 *string, const u8 *end) {
   Scanner scanner = { string, end };
   const u8 *z = string;
-  z = g2 (&scanner, z); if (!z) return 1; // XXX wired-in JSON grammar production
+  z = g2 (&scanner, z); // XXX wired-in JSON grammar production
   z = root (&scanner, z); if (!z) return 1;
-  z = g2 (&scanner, z); if (!z) return 1; // XXX wired-in JSON grammar production
+  z = g2 (&scanner, z); // XXX wired-in JSON grammar production
   if (z != end) {
     PyErr_Format (ReadError, "At byte offset %d, stuff left over", 
                   z - scanner.start);
@@ -238,9 +238,17 @@ class Recur(Peg):
         return self.nullity
     def firsts(self):
         return self.firstset
+    def can_overcommit(self):
+        return True
 
 def gen_call(name, peg):
-    return 'z = %s (s, z); if (!z) return z; c = *z;' % name
+    if always_succeeds(peg):
+        return 'z = %s (s, z); c = *z;' % name
+    else:
+        return 'z = %s (s, z); if (!z) return z; c = *z;' % name
+
+def always_succeeds(peg):
+    return peg.has_null() and not peg.can_overcommit()
 
 class Epsilon(Peg):
     def __str__(self):
@@ -251,6 +259,8 @@ class Epsilon(Peg):
         return True
     def firsts(self):
         return set()
+    def can_overcommit(self):
+        return False
 
 class Literal(Peg):
     def __init__(self, c):
@@ -268,6 +278,8 @@ class Literal(Peg):
         return False
     def firsts(self):
         return set(self.c)
+    def can_overcommit(self):
+        return False
 
 class OneOf(Peg):
     def __init__(self, *pegs):
@@ -300,6 +312,8 @@ class OneOf(Peg):
         return any(peg.has_null() for peg in self.pegs)
     def firsts(self):
         return union(peg.firsts() for peg in self.pegs)
+    def can_overcommit(self):
+        return any(peg.can_overcommit() for peg in self.pegs)
 
 def union(sets):
     result = set()
@@ -388,6 +402,8 @@ class Seq(Peg):
             if not peg.has_null():
                 break
         return f
+    def can_overcommit(self):
+        return True             # (conservative)
 
 class Star(Peg):
     def __init__(self, peg):
@@ -409,6 +425,8 @@ while (%s) {
         return True
     def firsts(self):
         return self.peg.firsts()
+    def can_overcommit(self):
+        return self.peg.can_overcommit()
 
 class StarSep(Peg):
     def __init__(self, peg, separator):
@@ -435,7 +453,8 @@ for (;;) {
         return False
     def firsts(self):
         return Seq(self.peg, self.separator).firsts()
-
+    def can_overcommit(self):
+        return True             # only slightly conservative
 
 def Maybe(peg):
     return OneOf(peg, Epsilon())
