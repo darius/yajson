@@ -2,6 +2,7 @@ import operator
 
 
 def gen(root_peg):
+    check_for_nulls(root_peg)
     names = gen_names(count_em(root_peg))
     nameitems = (sorted(names.items(), key=operator.itemgetter(1))
                  + [(root_peg, 'root')])
@@ -21,7 +22,7 @@ class Context:
         self.charset    = charset
     def gen(self, peg):
         if peg in self.names:
-            return """c = %s (s, c);""" % self.names[peg]
+            return gen_call(self.names[peg], peg)
         return peg.gen(self)
     def get_possible_leading_chars(self):
         return self.charset
@@ -29,6 +30,13 @@ class Context:
         return Context(self.names, self.char_tests, charset)
     def gen_member_test(self, charset):
         return self.char_tests.gen_test(charset, self.charset)
+    def gen_advance(self):
+        # N.B. The correctness of this depends on two facts:
+        #  - We always exit immediately on error.
+        #  - A test against the null-terminator of the input string is
+        #    always an error. We know this property holds because
+        #    check_for_nulls(root_peg).
+        return 'c = *++z;'
 
 class CharTests:
     def __init__(self):
@@ -67,7 +75,6 @@ class CharTests:
         bitmasks = map(self._gen_bitmask, range(256))
         return """\
 static const %s charset_table[257] = {
-  0,
   %s
 };""" % (type, indent('\n'.join(bitmasks)))
     def _gen_bitmask(self, char_index):
@@ -78,7 +85,7 @@ static const %s charset_table[257] = {
                 bitmask |= 1 << set_index
         return '0x%0*x,' % ((len(self.sets) + 3) >> 2, bitmask)
     def _gen_test(self, set_index):
-        return 'charset_table[c+1] & (1<<%d)' % set_index
+        return 'charset_table[c] & (1<<%d)' % set_index
     def _enter_table(self, charset, context_charset):
         for i, set_i in enumerate(self.sets):
             if charset == set_i:
@@ -109,65 +116,51 @@ prelude = """\
 
 static PyObject *ReadError;
 
+typedef unsigned char u8;
+
 typedef struct {
-  const char *here;
-  const char *start;
-  const char *end;
-  int failed;
+  const u8 *start;
+  const u8 *end;
 } Scanner;
 
-static int advance (Scanner *s) {
-  if (s->here == s->end) return -1;
-  return 0xFF & *s->here++;
+static const u8 *expected (Scanner *s, const u8 *z, char c) {
+  PyErr_Format (ReadError, "At byte-offset %d, expected '%c'",
+                z - s->start, c);
+  return NULL;
 }
 
-static void fail (Scanner *s) {
-  s->here = s->end;
-  s->failed = 1;  
-}
-
-static int expected (Scanner *s, int c) {
-  if (0 == s->failed) {
-    PyErr_Format (ReadError, "At byte-offset %d, expected '%c'",
-                  s->here - s->start, c);
-    fail (s);
-  }
-  return -1;
-}
-
-static int expected_one_of (Scanner *s, const char *charset) {
-  if (0 == s->failed) {
-    PyErr_Format (ReadError, "At byte-offset %d, expected one of '%s'",
-                  s->here - s->start, charset);
-    fail (s);
-  }
-  return -1;
+static const u8 *expected_one_of (Scanner *s, const u8 *z, const char *charset) {
+  PyErr_Format (ReadError, "At byte-offset %d, expected one of '%s'",
+                z - s->start, charset);
+  return NULL;
 }"""
 
 def gen_prototype(name):
     return """\
-static int %s (Scanner *s, int c);""" % name
+static const u8 *%s (Scanner *s, const u8 *z);""" % name
 
 def gen_function(context, peg, name):
     return """\
-static int %s (Scanner *s, int c) {
+static const u8 *%s (Scanner *s, const u8 *z) {
+  u8 c = *z;
   %s
-  return c;
+  return z;
 }""" % (name,
         indent(peg.gen(context)))
 
 postlude = """\
-static int parse (const char *string, const char *end) {
-  Scanner scanner = { string, string, end, 0 };
-  int c = g2 (&scanner, advance (&scanner));  // XXX wired-in JSON grammar production
-  c = root (&scanner, c);
-  c = g2 (&scanner, c);  // XXX wired-in JSON grammar production
-  if (c != -1) {
+static int parse (const u8 *string, const u8 *end) {
+  Scanner scanner = { string, end };
+  const u8 *z = string;
+  z = g2 (&scanner, z); if (!z) return 1; // XXX wired-in JSON grammar production
+  z = root (&scanner, z); if (!z) return 1;
+  z = g2 (&scanner, z); if (!z) return 1; // XXX wired-in JSON grammar production
+  if (z != end) {
     PyErr_Format (ReadError, "At byte offset %d, stuff left over", 
-                  scanner.here - scanner.start);
-    fail (&scanner);
+                  z - scanner.start);
+    return 1;
   }
-  return scanner.failed;
+  return 0;
 }
 
 static PyObject *yajson_check (PyObject *self, PyObject *args) {
@@ -177,11 +170,11 @@ static PyObject *yajson_check (PyObject *self, PyObject *args) {
     return NULL;
   char *start;
   Py_ssize_t size;
-  if (-1 == PyString_AsStringAndSize(string, &start, &size)) {
-      Py_DECREF(string);
+  if (-1 == PyString_AsStringAndSize (string, &start, &size)) {
+      Py_DECREF (string);
       return NULL;
   }
-  if (parse (start, start + size))
+  if (parse ((const u8 *)start, (const u8 *)start + size))
     return NULL;
   return PyInt_FromLong (0);
 }
@@ -219,6 +212,13 @@ def count_em(root_peg):
     counting(root_peg)
     return multiples
 
+def check_for_nulls(peg):
+    # We generate code using the null byte as an end-of-input
+    # sentinel, assuming such a null byte is never accepted. Check
+    # this assumption.
+    assert chr(0) not in peg.firsts()
+    map(check_for_nulls, peg.pegs)
+
 
 class Peg:
     pegs = ()
@@ -233,11 +233,14 @@ class Recur(Peg):
     def __str__(self):
         return self.name
     def gen(self, context):
-        return """c = %s (s, c);""" % self.name
+        return gen_call(self.name, self)
     def has_null(self):
         return self.nullity
     def firsts(self):
         return self.firstset
+
+def gen_call(name, peg):
+    return 'z = %s (s, z); if (!z) return z; c = *z;' % name
 
 class Epsilon(Peg):
     def __str__(self):
@@ -257,10 +260,10 @@ class Literal(Peg):
         return "'%s'" % self.c
     def gen(self, context):
         if set(self.c) == context.get_possible_leading_chars():
-            return """c = advance (s);"""
+            return context.gen_advance()
         c_lit = c_char_literal(self.c)
-        return ("""if (c != %s) expected (s, %s); c = advance (s);"""
-                % (c_lit, c_lit))
+        return ("""if (c != %s) return expected (s, z, %s); %s"""
+                % (c_lit, c_lit, context.gen_advance()))
     def has_null(self):
         return False
     def firsts(self):
@@ -290,7 +293,7 @@ class OneOf(Peg):
         if context_set:
             # XXX fill in with self.firsts():
             cs = frozenset(context_set)
-            branches.append((cs, cs, ('c = expected_one_of (s, %s);'
+            branches.append((cs, cs, ('return expected_one_of (s, z, %s);'
                                       % c_string_literal(sorted(self.firsts())))))
         return branches
     def has_null(self):
@@ -395,6 +398,7 @@ class Star(Peg):
     def is_trivial(self):
         return False
     def gen(self, context):
+        assert not self.peg.has_null()
         f = self.peg.firsts()
         return ("""\
 while (%s) {
@@ -451,8 +455,8 @@ def one_of(pegs):
 
 def c_char_literal(c):
     esc = c_escape(c, "'")
-    if esc.startswith(r'\x'):
-        return r"(0xFF & '%s')" % esc
+    if 0x80 <= ord(c):
+        return r"((u8)'%s')" % esc
     return r"'%s'" % esc
 
 def c_string_literal(s):
