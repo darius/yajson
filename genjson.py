@@ -1,4 +1,5 @@
 from peg import Recur, Star, OneOf, Seq, Maybe, StarSep, gen
+from peg import Variable, Scope, Code
 
 
 normal_chars = set(chr(i) for i in range(32, 256))
@@ -7,7 +8,9 @@ normal_chars.remove('\\')
 normal_chars.remove(chr(127))      # I think this counts as a control character
 normal_chars = list(sorted(normal_chars))
 
-value   = Recur(False, '{["-0123456789tfn')
+result = Variable('result', 'PyObject*', 'NULL')
+
+value   = Recur(False, '{["-0123456789tfn', [result])
 
 w       = Star(OneOf(*' \t\r\n\f'))   # XXX right?
 
@@ -29,8 +32,14 @@ jobject = Seq('{', w, Maybe(StarSep(Seq(jstring, w, ':', w, value, w),
                                     Seq(',', w))),
               '}')
 
-jvalue  = OneOf(jobject, jarray, jstring, number,
-                Seq(*'true'), Seq(*'false'), Seq(*'null'))
+jvalue  = Scope([result],
+                OneOf(jobject, jarray, jstring, number,
+                      Seq(Seq(*'true'),
+                          Code('result = Py_True; Py_INCREF (result);')),
+                      Seq(Seq(*'false'),
+                          Code('result = Py_False; Py_INCREF (result);')),
+                      Seq(Seq(*'null'),
+                          Code('result = Py_None; Py_INCREF (result);'))))
 
 
 def main():

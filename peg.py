@@ -226,10 +226,11 @@ class Peg:
         return all(isinstance(peg, Literal) for peg in self.pegs)
 
 class Recur(Peg):
-    def __init__(self, nullity, firstset):
-        self.nullity  = nullity
-        self.firstset = set(firstset)
-        self.name     = 'root'    # XXX
+    def __init__(self, nullity, firstset, variables):
+        self.nullity   = nullity
+        self.firstset  = set(firstset)
+        self.name      = 'root'    # XXX
+        self.variables = tuple(variables)
     def __str__(self):
         return self.name
     def gen(self, context):
@@ -261,6 +262,50 @@ class Epsilon(Peg):
         return set()
     def can_overcommit(self):
         return False
+
+class Variable:
+    def __init__(self, name, type, initial_value):
+        self.name = name
+        self.type = type
+        self.initial_value = initial_value
+    def __str__(self):
+        return self.name
+    def gen_init(self):
+        return '%s %s = %s;' % (self.type, self.name, self.initial_value)
+    def gen_finalize(self):
+        if self.type == 'PyObject*':
+            return 'if (%s) { Py_DECREF (%s); }' % (self.name, self.name)
+        return ';'
+
+class Code(Epsilon):
+    def __init__(self, body):
+        self.body = body
+    def __str__(self):
+        return '{%s}' % self.body
+    def gen(self, context):
+        return self.body
+
+class Scope(Peg):
+    def __init__(self, variables, peg):
+        self.variables = variables
+        self.peg  = peg
+        self.pegs = (peg,)
+    def __str__(self):
+        return '[%s|%s]' % (','.join(map(str, self.variables)), self.peg)
+    def gen(self, context):
+        # XXX needs cleanup, etc.
+        return ('{\n  %s\n  %s\n  %s\n}'
+                % (indent('\n'.join(v.gen_init()
+                                    for v in self.variables)),
+                   indent(self.peg.gen(context)),
+                   indent('\n'.join(v.gen_finalize()
+                                    for v in self.variables))))
+    def has_null(self):
+        return self.peg.has_null()
+    def firsts(self):
+        return self.peg.firsts()
+    def can_overcommit(self):
+        return self.peg.can_overcommit()
 
 class Literal(Peg):
     def __init__(self, c):
