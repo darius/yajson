@@ -15,7 +15,8 @@ def gen(root_peg):
     fail to match. I don't think it'd be *hard* to relax this
     assumption, but it might pervasively affect the C code scheme.
     Also, the inlining heuristic will produce code-size blowup on
-    some grammars.
+    some grammars; to avoid this we'd need a more conservative
+    definition of triviality.
 
     On the plus side, the generated code is really fast. I think all
     of the optimizations I've included have been tested to actually
