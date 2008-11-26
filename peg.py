@@ -14,11 +14,15 @@ def gen(root_peg):
     further input implies that the whole top-level expression must
     fail to match. I don't think it'd be *hard* to relax this
     assumption, but it might pervasively affect the C code scheme.
+    Also, the inlining heuristic will produce code-size blowup on
+    some grammars.
 
     On the plus side, the generated code is really fast. I think all
     of the optimizations I've included have been tested to actually
     speed it up in practice."""
     check_for_nulls(root_peg)
+    # 'names' assigns names to the pegs we won't inline. We inline
+    # all pegs that are either trivial or referenced just once.
     names = gen_names(count_em(root_peg))
     nameitems = (sorted(names.items(), key=operator.itemgetter(1))
                  + [(root_peg, 'root')])
