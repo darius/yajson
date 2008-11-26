@@ -72,6 +72,9 @@ class CharTests:
         """Return a C expression that's true iff the variable 'c'
         is a member of charset, given we already know c is a 
         member of context_charset."""
+        # TODO: extract most of this logic into another function.
+        # This object should only be responsible for constant-table
+        # tests. (I think.)
         assert charset.issubset(context_charset)
         test_set = charset & context_charset
         if not test_set:
