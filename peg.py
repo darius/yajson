@@ -2,6 +2,24 @@ import operator
 
 
 def gen(root_peg):
+    """Return C source code for a C-Python API module providing a
+    matcher against root_peg. Currently a bit of the code assumes
+    root_peg is a JSON grammar: it knows that the jvalue production
+    happens to work out to the generated name of g2, for the initial
+    entry point. Needs generalizing! More seriously, we also can't
+    match the null byte, we don't memoize, and there's at least one
+    JSON-grammar-specific assumption I've let creep in, something like
+    the LL(1) grammar condition: that once a sub-peg matches the
+    leading character of its input, then its failure to match on
+    further input implies that the whole top-level expression must
+    fail to match. I don't think it'd be *hard* to relax this
+    assumption, but it might pervasively affect the C code scheme.
+    Oh, also the inlining of all nonrecursive productions could
+    blow up code size in general.
+
+    On the plus side, the generated code is really fast. I think all
+    of the optimizations I've included have been tested to actually
+    speed it up in practice."""
     check_for_nulls(root_peg)
     names = gen_names(count_em(root_peg))
     nameitems = (sorted(names.items(), key=operator.itemgetter(1))
@@ -11,11 +29,18 @@ def gen(root_peg):
     context = Context(names, char_tests, all_chars)
     functions = '\n\n'.join(gen_function(context, peg, name)
                             for peg, name in nameitems)
-    return '\n\n'.join([prelude, char_tests.gen_tables(), protos, functions, postlude])
+    return '\n\n'.join([prelude, char_tests.gen_tables(), 
+                        protos, functions, postlude])
 
 all_chars = set(map(chr, range(0, 256)))
 
 class Context:
+    """The context of code generation. It changes as we go. It
+    includes the generated names of functions implementing recursive
+    productions (all other pegs are inlined), the set of constant
+    tables used by char-set membership tests, and contextual knowledge
+    of what the next input character may possibly be at the current
+    point in the code."""
     def __init__(self, names, char_tests, charset):
         self.names      = names
         self.char_tests = char_tests
@@ -34,14 +59,19 @@ class Context:
         # N.B. The correctness of this depends on two facts:
         #  - We always exit immediately on error.
         #  - A test against the null-terminator of the input string is
-        #    always an error. We know this property holds because
-        #    check_for_nulls(root_peg).
+        #    always an error. We know this because check_for_nulls(root_peg).
         return 'c = *++z;'
 
 class CharTests:
+    """Picks the cheapest way to test for character-set membership in
+     a context. This may turn out to be by lookup in a constant table,
+     which this object remembers and generates."""
     def __init__(self):
-        self.sets = []
+        self.sets = [] # Those sets that need a table for membership tests.
     def gen_test(self, charset, context_charset):
+        """Return a C expression that's true iff the variable 'c'
+        is a member of charset, given we already know c is a 
+        member of context_charset."""
         assert charset.issubset(context_charset)
         test_set = charset & context_charset
         if not test_set:
@@ -55,9 +85,9 @@ class CharTests:
             inverse = context_charset - charset
             c = list(inverse)[0]
             return 'c != %s' % c_char_literal(c)
-        elif charset == set('0123456789'):
+        elif charset == set('0123456789'):  # & context_charset
             return 'isdigit (c)'
-        elif charset == set('0123456789abcdefABCDEF'):
+        elif charset == set('0123456789abcdefABCDEF'):  # & context_charset
             return 'isxdigit (c)'
         elif get_nonempty_range(charset):
             # XXX I'm not sure this is an actual improvement:
@@ -65,12 +95,14 @@ class CharTests:
         else:
             return self._gen_test(self._enter_table(charset, context_charset))
     def gen_tables(self):
+        """Return C declarations of any tables needed by expressions
+        we've emitted for self.gen_test()."""
         assert len(self.sets) <= 32
         if len(self.sets) <= 8:
             type = 'unsigned char'
         elif len(self.sets) <= 16:
             type = 'unsigned short'
-        else:
+        else:                   # XXX also check len <= 32 or whatever
             type = 'unsigned'
         bitmasks = map(self._gen_bitmask, range(256))
         return """\
@@ -95,6 +127,8 @@ static const %s charset_table[257] = {
         return len(self.sets) - 1
 
 def get_nonempty_range(charset):
+    """Return x,y such that charset == set(map(chr, range(x, y))),
+    if possible (and nonempty), else None."""
     if not charset:
         return None
     vs = map(ord, sorted(charset))
@@ -196,11 +230,14 @@ void inityajson (void) {
 }"""
 
 def gen_names(pegs):
+    "Return a map from the nontrivial pegs to their generated names."
     pegs = [peg for peg in pegs if not peg.is_trivial()]
     return dict((peg, 'g%d' % i) 
                 for (i, peg) in enumerate(sorted(pegs, key=str)))
 
 def count_em(root_peg):
+    """Return a set of those pegs referenced more than once in the
+    graph reachable from root_peg."""
     seen = set()
     multiples = set()
     def counting(peg):
@@ -213,19 +250,48 @@ def count_em(root_peg):
     return multiples
 
 def check_for_nulls(peg):
-    # We generate code using the null byte as an end-of-input
-    # sentinel, assuming such a null byte is never accepted. Check
-    # this assumption.
+    """Crash if any reachable peg can match the null byte. Needed
+    because we generate code using the null byte as an end-of-input
+    sentinel, assuming such a null byte is never accepted. (This
+    happens to be a speed win with the C-Python API.)"""
     assert chr(0) not in peg.firsts()
     map(check_for_nulls, peg.pegs)
 
 
 class Peg:
+    "A part of a Parsing Expression Grammar."
     pegs = ()
     def is_trivial(self):
+        """A trivial peg has no * or any sub-pegs except literals.
+        It's equivalent to a union of literal strings."""
         return all(isinstance(peg, Literal) for peg in self.pegs)
+    def gen(self, context):
+        """Return C code (a sequence of statements) for this peg to
+        match the input."""
+        abstract
+    def has_null(self):
+        "Return true iff this peg can match the empty string."
+        abstract
+    def firsts(self):
+        """Return a set including all characters that can possibly
+        appear as the first character of input that this peg matches."""
+        abstract
+    def can_overcommit(self):
+        """Return true unless it's guaranteed that matching this peg
+        never needs to backtrack. That is: unless, once the first
+        character is matched, this peg is certain to match
+        something."""
+        abstract
 
 class Recur(Peg):
+    """A PEG grammar may include recursive productions. Implemented
+    directly, this would mean cycles in our reference graph, plus the
+    need to solve simultaneous equations to compute the first-sets.
+    Instead, we make the user represent the references to the recurring
+    production as Recur nodes. The user must supply the solution to
+    the recursion equations. (Not onerous for a simple grammar like
+    JSON. Later on we can add code to compute it ourselves if this
+    library ever gets that far.)"""
     def __init__(self, nullity, firstset, variables):
         self.nullity   = nullity
         self.firstset  = set(firstset)
@@ -252,6 +318,7 @@ def always_succeeds(peg):
     return peg.has_null() and not peg.can_overcommit()
 
 class Epsilon(Peg):
+    "A peg that matches just the empty string."
     def __str__(self):
         return '()'
     def gen(self, context):
@@ -263,7 +330,18 @@ class Epsilon(Peg):
     def can_overcommit(self):
         return False
 
+class Code(Epsilon):
+    "A 'peg' that succeeds and performs some C-code action."
+    # XXX all this needs filling out with a way to return parse results
+    def __init__(self, body):
+        self.body = body
+    def __str__(self):
+        return '{%s}' % self.body
+    def gen(self, context):
+        return self.body
+
 class Variable:
+    "A C-code variable, to be assigned to in Code pegs."
     def __init__(self, name, type, initial_value):
         self.name = name
         self.type = type
@@ -277,15 +355,8 @@ class Variable:
             return 'if (%s) { Py_DECREF (%s); }' % (self.name, self.name)
         return ';'
 
-class Code(Epsilon):
-    def __init__(self, body):
-        self.body = body
-    def __str__(self):
-        return '{%s}' % self.body
-    def gen(self, context):
-        return self.body
-
 class Scope(Peg):
+    "A peg that introduces local variables with scope enclosing the sub-peg."
     def __init__(self, variables, peg):
         self.variables = variables
         self.peg  = peg
@@ -308,6 +379,7 @@ class Scope(Peg):
         return self.peg.can_overcommit()
 
 class Literal(Peg):
+    "A peg that matches a single literal character."
     def __init__(self, c):
         assert 1 == len(c)
         self.c = c
@@ -327,6 +399,7 @@ class Literal(Peg):
         return False
 
 class OneOf(Peg):
+    "A peg that matches if any of its sub-pegs matches."
     def __init__(self, *pegs):
         assert 0 < len(pegs)
         self.pegs = map(parse, pegs)
@@ -350,8 +423,9 @@ class OneOf(Peg):
         if context_set:
             # XXX fill in with self.firsts():
             cs = frozenset(context_set)
+            expected = sorted(self.firsts())
             branches.append((cs, cs, ('return expected_one_of (s, z, %s);'
-                                      % c_string_literal(sorted(self.firsts())))))
+                                      % c_string_literal(expected))))
         return branches
     def has_null(self):
         return any(peg.has_null() for peg in self.pegs)
@@ -373,9 +447,10 @@ def gen_dispatch(context, branches):
     if len(branches) == 0:
         return ';'
     elif len(branches) <= 3:
-        return '\nelse '.join(gen_if(context.sprout(context_set).gen_member_test(charset),
-                                     stmts)
-                              for (context_set, charset, stmts) in branches)
+        return '\nelse '.join(
+            gen_if(context.sprout(context_set).gen_member_test(charset),
+                   stmts)
+            for (context_set, charset, stmts) in branches)
     else:
         return """\
 switch (c) {
@@ -386,11 +461,12 @@ def gen_case(context, (context_set, charset, stmts)):
     if context_set.issubset(charset):
         label = 'default:'
     else:
-        label = '\n'.join('case %s:' % c_char_literal(c) for c in sorted(charset))
+        label = '\n'.join('case %s:' % c_char_literal(c)
+                          for c in sorted(charset))
     return '%s\n  %s\n  break;' % (label, indent(stmts))
 
 def truncate(branches):
-    """Remove any branches that are always preempted by earlier branches."""
+    "Remove any branches that are always preempted by earlier branches."
     result = []
     for context_set, charset, stmts in branches:
         always_taken = context_set.issubset(charset)
@@ -401,7 +477,7 @@ def truncate(branches):
     return result
 
 def collapse(branches):
-    """Combine adjacent branches that share the same body."""
+    "Combine adjacent branches that share the same body."
     result = []
     prev_stmts = None
     for context_set, charset, stmts in branches:
@@ -426,6 +502,8 @@ def embrace(stmts):
     return '{\n  %s\n}' % indent(stmts)
 
 class Seq(Peg):
+    """A peg that matches any concatenation of what each of its
+    sub-pegs matches, in order."""
     def __init__(self, *pegs):
         self.pegs = map(parse, pegs)
     def __str__(self):
@@ -451,6 +529,8 @@ class Seq(Peg):
         return True             # (conservative)
 
 class Star(Peg):
+    """A peg that matches any concatenation of 0 or more matches
+    by its sub-peg. (Kleene star.)"""
     def __init__(self, peg):
         self.peg = parse(peg)
         self.pegs = (self.peg,)
@@ -474,9 +554,16 @@ while (%s) {
         return self.peg.can_overcommit()
 
 class StarSep(Peg):
+    """A peg that matches like (p (sep p)*). That is,
+    StarSep(p, sep) is equivalent to Seq(p, Star(seq(sep, p))).
+    sep must not match the empty string."""
+    # I think I provided this class because it's easier to make this
+    # primitive than to generate good code for the combination. I
+    # don't remember for sure...
     def __init__(self, peg, separator):
         self.peg = parse(peg)
         self.separator = parse(separator)
+        # XXX aren't we missing an "assert not self.peg.has_null()"?
         assert not self.separator.has_null()
         self.pegs = (self.peg, self.separator)
     def __str__(self):
@@ -502,10 +589,12 @@ for (;;) {
         return True             # only slightly conservative
 
 def Maybe(peg):
+    "Matching peg or the empty string."
     return OneOf(peg, Epsilon())
 
 
 def parse(surface_peg):
+    "Convert from a convenient 'surface syntax' to a peg object."
     if isinstance(surface_peg, basestring):
         return one_of(map(Literal, surface_peg))
     return surface_peg
@@ -518,12 +607,14 @@ def one_of(pegs):
 
 
 def c_char_literal(c):
+    "Convert c to a C constant expression of type unsigned char."
     esc = c_escape(c, "'")
     if 0x80 <= ord(c):
         return r"((u8)'%s')" % esc
     return r"'%s'" % esc
 
 def c_string_literal(s):
+    "Convert s to a C constant string."
     return '"%s"' % ''.join(c_escape(c, '"') for c in s)
 
 c_escape_table = {
