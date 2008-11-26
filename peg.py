@@ -115,7 +115,7 @@ class CharTests:
             type = 'unsigned'
         bitmasks = map(self._gen_bitmask, range(256))
         return """\
-static const %s charset_table[257] = {
+static const %s charset_table[256] = {
   %s
 };""" % (type, indent('\n'.join(bitmasks)))
     def _gen_bitmask(self, char_index):
