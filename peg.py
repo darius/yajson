@@ -37,7 +37,8 @@ class Context:
     includes the generated names of functions implementing nontrivial
     productions, the set of constant tables used by char-set
     membership tests, and contextual knowledge of what the next input
-    character may possibly be at the current point in the code."""
+    character may possibly be at the current point in the code
+    (because prior tests rule some characters out)."""
     def __init__(self, names, char_tests, charset):
         self.names      = names
         self.char_tests = char_tests
