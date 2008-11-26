@@ -122,8 +122,9 @@ class CharTests:
         set_index = self._enter_table(charset, context_charset)
         return 'charset_table[c] & (1<<%d)' % set_index
     def _enter_table(self, charset, context_charset):
+        test_set = charset & context_charset
         for i, set_i in enumerate(self.sets):
-            if charset == set_i:
+            if test_set == set_i & context_charset:
                 return i
         assert all(ord(c) < 256 for c in charset) # XXX relax this restriction
         self.sets.append(frozenset(charset))
