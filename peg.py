@@ -14,8 +14,6 @@ def gen(root_peg):
     further input implies that the whole top-level expression must
     fail to match. I don't think it'd be *hard* to relax this
     assumption, but it might pervasively affect the C code scheme.
-    Oh, also the inlining of all nonrecursive productions could
-    blow up code size in general.
 
     On the plus side, the generated code is really fast. I think all
     of the optimizations I've included have been tested to actually
@@ -36,11 +34,10 @@ all_chars = set(map(chr, range(0, 256)))
 
 class Context:
     """The context of code generation. It changes as we go. It
-    includes the generated names of functions implementing recursive
-    productions (all other pegs are inlined), the set of constant
-    tables used by char-set membership tests, and contextual knowledge
-    of what the next input character may possibly be at the current
-    point in the code."""
+    includes the generated names of functions implementing nontrivial
+    productions, the set of constant tables used by char-set
+    membership tests, and contextual knowledge of what the next input
+    character may possibly be at the current point in the code."""
     def __init__(self, names, char_tests, charset):
         self.names      = names
         self.char_tests = char_tests
