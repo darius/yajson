@@ -458,7 +458,8 @@ def union(sets):
 
 def gen_dispatch(context, branches):
     """Generate an if...else-if chain."""
-    # N.B. We assume the tests are known to be exhaustive in the given context.
+    # Precondition: the tests of all branches together are exhaustive
+    # in the given context.
     branches = truncate(collapse(branches))
     if len(branches) == 0:
         return ';'
