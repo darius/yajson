@@ -4,19 +4,19 @@ import operator
 def gen(root_peg):
     """Return C source code for a C-Python API module providing a
     matcher against root_peg. Currently a bit of the code assumes
-    root_peg is a JSON grammar: it knows that the jvalue production
-    happens to work out to the generated name of g2, for the initial
-    entry point. Needs generalizing! More seriously, we also can't
-    match the null byte, we don't memoize, and there's at least one
-    JSON-grammar-specific assumption I've let creep in, something like
-    the LL(1) grammar condition: that once a sub-peg matches the
-    leading character of its input, then its failure to match on
-    further input implies that the whole top-level expression must
-    fail to match. I don't think it'd be *hard* to relax this
+    root_peg is a JSON grammar: it builds the whitespace production
+    (which happens to work out to the generated name of g2) into the
+    toplevel parse function. Needs generalizing! More seriously, we
+    also can't match the null byte, we don't memoize, and there's at
+    least one JSON-grammar-specific assumption I've let creep in,
+    something like the LL(1) grammar condition: that once a sub-peg
+    matches the leading character of its input, then its failure to
+    match on further input implies that the whole top-level expression
+    must fail to match. I don't think it'd be *hard* to relax this
     assumption, but it might pervasively affect the C code scheme.
-    Also, the inlining heuristic will produce code-size blowup on
-    some grammars; to avoid this we'd need a more conservative
-    definition of triviality.
+    Also, the inlining heuristic will produce code-size blowup on some
+    grammars; to avoid this we'd need a more conservative definition
+    of triviality.
 
     On the plus side, the generated code is really fast. I think all
     of the optimizations I've included have been tested to actually
