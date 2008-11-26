@@ -1,6 +1,3 @@
-we could optimize out the after-call failure check when calling a
-procedure that can't fail (because it accepts epsilon)
-
 N.B. g0() (the string parser) has a redundant test at the start, because
 it doesn't know that all the calling contexts have the test already
 
