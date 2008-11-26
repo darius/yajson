@@ -85,6 +85,7 @@ def gen_member_test(charset, context_charset, char_tests):
         return 'isdigit (c)'
     elif test_set == frozenset('0123456789abcdefABCDEF') & context_charset:
         return 'isxdigit (c)'
+    # TODO: check for more 'isfoo()' macros from ctype.h
     elif get_nonempty_range(test_set):
         # A range test is not necessarily faster in itself than a
         # table test, but it conserves space for the irregular
