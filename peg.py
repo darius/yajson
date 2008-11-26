@@ -35,7 +35,7 @@ def gen(root_peg):
     return '\n\n'.join([prelude, char_tests.gen_tables(), 
                         protos, functions, postlude])
 
-all_chars = set(map(chr, range(0, 256)))
+all_chars = frozenset(map(chr, range(0, 256)))
 
 class Context:
     """The context of code generation. It changes as we go. It
@@ -91,9 +91,9 @@ class CharTests:
             inverse = context_charset - charset
             c = list(inverse)[0]
             return 'c != %s' % c_char_literal(c)
-        elif charset == set('0123456789'):  # & context_charset
+        elif charset == frozenset('0123456789'):  # & context_charset
             return 'isdigit (c)'
-        elif charset == set('0123456789abcdefABCDEF'):  # & context_charset
+        elif charset == frozenset('0123456789abcdefABCDEF'): # & context_charset
             return 'isxdigit (c)'
         elif get_nonempty_range(charset):
             # A range test is not necessarily faster in itself than a
@@ -256,7 +256,7 @@ def count_em(root_peg):
             seen.add(peg)
             map(counting, peg.pegs)
     counting(root_peg)
-    return multiples
+    return frozenset(multiples)
 
 def check_for_nulls(peg):
     """Crash if any reachable peg can match the null byte. Needed
@@ -282,13 +282,15 @@ class Peg:
         """Return true iff this peg can match the empty string. May be
         conservative: returning false means we're *sure* this cannot
         match nothing."""
+        # XXX I think that's wrong about conservativity
         abstract
     def firsts(self):
         """Return a set including all characters that can possibly
         appear as the first character of input that this peg
         matches. May be conservative."""
+        # XXX I think that's wrong about conservativity
         abstract
-    def can_overcommit(self):
+    def may_overcommit(self):
         """Return true unless matching this peg never needs to
         backtrack. That is, false means we're conservatively sure that
         once the first character is matched, this peg is certain to
@@ -306,7 +308,7 @@ class Recur(Peg):
     library ever gets that far.)"""
     def __init__(self, nullity, firstset, variables):
         self.nullity   = nullity
-        self.firstset  = set(firstset)
+        self.firstset  = frozenset(firstset)
         self.name      = 'root'    # XXX
         self.variables = tuple(variables)
     def __str__(self):
@@ -317,7 +319,7 @@ class Recur(Peg):
         return self.nullity
     def firsts(self):
         return self.firstset
-    def can_overcommit(self):
+    def may_overcommit(self):
         return True
 
 def gen_call(name, peg):
@@ -327,7 +329,7 @@ def gen_call(name, peg):
         return 'z = %s (s, z); if (!z) return z; c = *z;' % name
 
 def always_succeeds(peg):
-    return peg.has_null() and not peg.can_overcommit()
+    return peg.has_null() and not peg.may_overcommit()
 
 class Epsilon(Peg):
     "A peg that matches just the empty string."
@@ -338,8 +340,8 @@ class Epsilon(Peg):
     def has_null(self):
         return True
     def firsts(self):
-        return set()
-    def can_overcommit(self):
+        return frozenset()
+    def may_overcommit(self):
         return False
 
 class Code(Epsilon):
@@ -387,8 +389,8 @@ class Scope(Peg):
         return self.peg.has_null()
     def firsts(self):
         return self.peg.firsts()
-    def can_overcommit(self):
-        return self.peg.can_overcommit()
+    def may_overcommit(self):
+        return self.peg.may_overcommit()
 
 class Literal(Peg):
     "A peg that matches a single literal character."
@@ -398,7 +400,7 @@ class Literal(Peg):
     def __str__(self):
         return "'%s'" % self.c
     def gen(self, context):
-        if set(self.c) == context.get_possible_leading_chars():
+        if frozenset(self.c) == context.get_possible_leading_chars():
             return context.gen_advance()
         c_lit = c_char_literal(self.c)
         return ("""if (c != %s) return expected (s, z, %s); %s"""
@@ -406,8 +408,8 @@ class Literal(Peg):
     def has_null(self):
         return False
     def firsts(self):
-        return set(self.c)
-    def can_overcommit(self):
+        return frozenset(self.c)
+    def may_overcommit(self):
         return False
 
 class OneOf(Peg):
@@ -443,14 +445,14 @@ class OneOf(Peg):
         return any(peg.has_null() for peg in self.pegs)
     def firsts(self):
         return union(peg.firsts() for peg in self.pegs)
-    def can_overcommit(self):
-        return any(peg.can_overcommit() for peg in self.pegs)
+    def may_overcommit(self):
+        return any(peg.may_overcommit() for peg in self.pegs)
 
 def union(sets):
     result = set()
     for s in sets:
         result |= s
-    return result
+    return frozenset(result)
 
 def gen_dispatch(context, branches):
     """Generate an if...else-if chain."""
@@ -536,8 +538,8 @@ class Seq(Peg):
             f |= peg.firsts()
             if not peg.has_null():
                 break
-        return f
-    def can_overcommit(self):
+        return frozenset(f)
+    def may_overcommit(self):
         return True             # (conservative)
 
 class Star(Peg):
@@ -562,8 +564,8 @@ while (%s) {
         return True
     def firsts(self):
         return self.peg.firsts()
-    def can_overcommit(self):
-        return self.peg.can_overcommit()
+    def may_overcommit(self):
+        return self.peg.may_overcommit()
 
 class StarSep(Peg):
     """A peg that matches like (p (sep p)*). That is,
@@ -597,7 +599,7 @@ for (;;) {
         return False
     def firsts(self):
         return Seq(self.peg, self.separator).firsts()
-    def can_overcommit(self):
+    def may_overcommit(self):
         return True             # only slightly conservative
 
 def Maybe(peg):
