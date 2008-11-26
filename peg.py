@@ -269,7 +269,7 @@ def check_for_nulls(peg):
 
 class Peg:
     "A part of a Parsing Expression Grammar."
-    pegs = ()
+    pegs = ()      # Sub-pegs this peg references (none by default)
     def is_trivial(self):
         """A trivial peg has no * or any sub-pegs except literals.
         It's equivalent to a union of literal strings."""
@@ -279,16 +279,16 @@ class Peg:
         match the input."""
         abstract
     def has_null(self):
-        """Return true iff this peg can match the empty string. May be
-        conservative: returning false means we're *sure* this cannot
-        match nothing."""
-        # XXX I think that's wrong about conservativity
+        "Return true iff this peg matches the empty string."
+        # N.B. Use of this gets problematic in the presence of
+        # lookahead, which would imply a peg can sometimes match
+        # epsilon and sometimes not. Each use of has_null() will need
+        # to be reexamined if we add lookahead.
         abstract
     def firsts(self):
-        """Return a set including all characters that can possibly
-        appear as the first character of input that this peg
-        matches. May be conservative."""
-        # XXX I think that's wrong about conservativity
+        """Return a set of all characters that can possibly appear as
+        the first character of input that this peg matches."""
+        # N.B. This also will need to be revisited given lookahead.
         abstract
     def may_overcommit(self):
         """Return true unless matching this peg never needs to
@@ -309,7 +309,7 @@ class Recur(Peg):
     def __init__(self, nullity, firstset, variables):
         self.nullity   = nullity
         self.firstset  = frozenset(firstset)
-        self.name      = 'root'    # XXX
+        self.name      = 'root' # XXX assumes just 1 recursive production
         self.variables = tuple(variables)
     def __str__(self):
         return self.name
@@ -428,6 +428,8 @@ class OneOf(Peg):
         def gen_branch(peg):
             cs = frozenset(context_set)
             if peg.has_null():
+                # This branch is certain to be taken. (True only
+                # because we don't provide a lookahead PEG type.)
                 return (cs, cs, context.gen(peg))
             f = peg.firsts()
             branch = (cs, f, context.sprout(f & cs).gen(peg))
@@ -577,7 +579,7 @@ class StarSep(Peg):
     def __init__(self, peg, separator):
         self.peg = parse(peg)
         self.separator = parse(separator)
-        # XXX aren't we missing an "assert not self.peg.has_null()"?
+        assert not self.peg.has_null()
         assert not self.separator.has_null()
         self.pegs = (self.peg, self.separator)
     def __str__(self):
