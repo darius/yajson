@@ -57,7 +57,7 @@ class Context:
     def sprout(self, charset):
         return Context(self.names, self.char_tests, charset)
     def gen_member_test(self, charset):
-        return self.char_tests.gen_test(charset, self.charset)
+        return gen_member_test(charset, self.charset, self.char_tests)
     def gen_advance(self):
         # N.B. The correctness of this depends on two facts:
         #  - We always exit immediately on error.
@@ -65,6 +65,50 @@ class Context:
         #    always an error. We know this because check_for_nulls(root_peg).
         return 'c = *++z;'
 
+def gen_member_test(charset, context_charset, char_tests):
+    """Return a C expression that's true iff the variable 'c'
+    is a member of charset, given we already know c is a 
+    member of context_charset."""
+    test_set = charset & context_charset
+    if not test_set:
+        return '0'
+    elif context_charset.issubset(test_set):
+        return '1'
+    elif 1 == len(test_set):
+        c = list(test_set)[0]
+        return 'c == %s' % c_char_literal(c)
+    elif 1 == len(context_charset - test_set):
+        inverse = context_charset - test_set
+        c = list(inverse)[0]
+        return 'c != %s' % c_char_literal(c)
+    elif test_set == frozenset('0123456789') & context_charset:
+        return 'isdigit (c)'
+    elif test_set == frozenset('0123456789abcdefABCDEF') & context_charset:
+        return 'isxdigit (c)'
+    elif get_nonempty_range(test_set):
+        # A range test is not necessarily faster in itself than a
+        # table test, but it conserves space for the irregular
+        # sets that actually need tables. (When we have fewer 
+        # tables, accessing each one is faster.)
+        return gen_range_test(get_nonempty_range(test_set))
+    else:
+        return char_tests.gen_test(test_set, context_charset)
+
+def get_nonempty_range(charset):
+    """Return x,y such that charset == set(map(chr, range(x, y))),
+    if possible (and nonempty), else None."""
+    if not charset:
+        return None
+    vs = map(ord, sorted(charset))
+    lo, hi = vs[0], vs[-1]
+    if hi + 1 - lo == len(charset):
+        return lo, hi + 1
+    return None
+
+def gen_range_test((lo, hibound)):
+    # TODO: generate a > test when hibound == 256
+    return '(unsigned)(c - %u) < %u' % (lo, hibound - lo)
+    
 class CharTests:
     """Picks the cheapest way to test for character-set membership in
      a context. This may turn out to be by lookup in a constant table,
@@ -75,34 +119,15 @@ class CharTests:
         """Return a C expression that's true iff the variable 'c'
         is a member of charset, given we already know c is a 
         member of context_charset."""
-        # TODO: extract most of this logic into another function.
-        # This object should only be responsible for constant-table
-        # tests. (I think.)
-        assert charset.issubset(context_charset)
-        test_set = charset & context_charset
-        if not test_set:
-            return '0'
-        elif context_charset.issubset(charset):
-            return '1'
-        elif 1 == len(test_set):
-            c = list(test_set)[0]
-            return 'c == %s' % c_char_literal(c)
-        elif 1 == len(context_charset - charset):
-            inverse = context_charset - charset
-            c = list(inverse)[0]
-            return 'c != %s' % c_char_literal(c)
-        elif charset == frozenset('0123456789'):  # & context_charset
-            return 'isdigit (c)'
-        elif charset == frozenset('0123456789abcdefABCDEF'): # & context_charset
-            return 'isxdigit (c)'
-        elif get_nonempty_range(charset):
-            # A range test is not necessarily faster in itself than a
-            # table test, but it conserves space for the irregular
-            # sets that actually need tables. (When we have fewer 
-            # tables, accessing each one is faster.)
-            return gen_range_test(get_nonempty_range(charset))
-        else:
-            return self._gen_test(self._enter_table(charset, context_charset))
+        set_index = self._enter_table(charset, context_charset)
+        return 'charset_table[c] & (1<<%d)' % set_index
+    def _enter_table(self, charset, context_charset):
+        for i, set_i in enumerate(self.sets):
+            if charset == set_i:
+                return i
+        assert all(ord(c) < 256 for c in charset) # XXX relax this restriction
+        self.sets.append(frozenset(charset))
+        return len(self.sets) - 1
     def gen_tables(self):
         """Return C declarations of any tables needed by expressions
         we've emitted for self.gen_test()."""
@@ -125,31 +150,7 @@ static const %s charset_table[256] = {
             if c in charset:
                 bitmask |= 1 << set_index
         return '0x%0*x,' % ((len(self.sets) + 3) >> 2, bitmask)
-    def _gen_test(self, set_index):
-        return 'charset_table[c] & (1<<%d)' % set_index
-    def _enter_table(self, charset, context_charset):
-        for i, set_i in enumerate(self.sets):
-            if charset == set_i:
-                return i
-        assert all(ord(c) < 256 for c in charset) # XXX relax this restriction
-        self.sets.append(frozenset(charset))
-        return len(self.sets) - 1
 
-def get_nonempty_range(charset):
-    """Return x,y such that charset == set(map(chr, range(x, y))),
-    if possible (and nonempty), else None."""
-    if not charset:
-        return None
-    vs = map(ord, sorted(charset))
-    lo, hi = vs[0], vs[-1]
-    if hi + 1 - lo == len(charset):
-        return lo, hi + 1
-    return None
-
-def gen_range_test((lo, hibound)):
-    # TODO: generate a > test when hibound == 256
-    return '(unsigned)(c - %u) < %u' % (lo, hibound - lo)
-    
 
 prelude = """\
 #include <Python.h>
