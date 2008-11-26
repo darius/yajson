@@ -404,7 +404,7 @@ class Literal(Peg):
         if frozenset(self.c) == context.get_possible_leading_chars():
             return context.gen_advance()
         c_lit = c_char_literal(self.c)
-        return ("""if (c != %s) return expected (s, z, %s); %s"""
+        return ("if (c != %s) return expected (s, z, %s); %s"
                 % (c_lit, c_lit, context.gen_advance()))
     def has_null(self):
         return False
@@ -457,7 +457,7 @@ def union(sets):
     return frozenset(result)
 
 def gen_dispatch(context, branches):
-    """Generate an if...else-if chain."""
+    "Generate an if...else-if chain."
     # Precondition: the tests of all branches together are exhaustive
     # in the given context.
     branches = truncate(collapse(branches))
