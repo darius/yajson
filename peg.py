@@ -101,12 +101,12 @@ class CharTests:
     def gen_tables(self):
         """Return C declarations of any tables needed by expressions
         we've emitted for self.gen_test()."""
-        assert len(self.sets) <= 32
+        assert len(self.sets) <= 32 # XXX relax this restriction
         if len(self.sets) <= 8:
             type = 'unsigned char'
         elif len(self.sets) <= 16:
             type = 'unsigned short'
-        else:                   # XXX also check len <= 32 or whatever
+        else:
             type = 'unsigned'
         bitmasks = map(self._gen_bitmask, range(256))
         return """\
