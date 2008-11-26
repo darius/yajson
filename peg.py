@@ -111,9 +111,8 @@ def gen_range_test((lo, hibound)):
     return '(unsigned)(c - %u) < %u' % (lo, hibound - lo)
     
 class CharTests:
-    """Picks the cheapest way to test for character-set membership in
-     a context. This may turn out to be by lookup in a constant table,
-     which this object remembers and generates."""
+    """Generates tests for character-set membership by lookup in a
+    constant table, which this object remembers and also generates."""
     def __init__(self):
         self.sets = [] # Those sets that need a table for membership tests.
     def gen_test(self, charset, context_charset):
