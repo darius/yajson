@@ -289,7 +289,7 @@ class Peg:
     def firsts(self):
         """Return a set of all characters that can possibly appear as
         the first character of input that this peg matches."""
-        # N.B. This also will need to be revisited given lookahead.
+        # N.B. This also may need reviewing given lookahead.
         abstract
     def may_overcommit(self):
         """Return true unless matching this peg never needs to
