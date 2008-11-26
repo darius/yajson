@@ -91,7 +91,10 @@ class CharTests:
         elif charset == set('0123456789abcdefABCDEF'):  # & context_charset
             return 'isxdigit (c)'
         elif get_nonempty_range(charset):
-            # XXX I'm not sure this is an actual improvement:
+            # A range test is not necessarily faster in itself than a
+            # table test, but it conserves space for the irregular
+            # sets that actually need tables. (When we have fewer 
+            # tables, accessing each one is faster.)
             return gen_range_test(get_nonempty_range(charset))
         else:
             return self._gen_test(self._enter_table(charset, context_charset))
