@@ -279,17 +279,20 @@ class Peg:
         match the input."""
         abstract
     def has_null(self):
-        "Return true iff this peg can match the empty string."
+        """Return true iff this peg can match the empty string. May be
+        conservative: returning false means we're *sure* this cannot
+        match nothing."""
         abstract
     def firsts(self):
         """Return a set including all characters that can possibly
-        appear as the first character of input that this peg matches."""
+        appear as the first character of input that this peg
+        matches. May be conservative."""
         abstract
     def can_overcommit(self):
-        """Return true unless it's guaranteed that matching this peg
-        never needs to backtrack. That is: unless, once the first
-        character is matched, this peg is certain to match
-        something."""
+        """Return true unless matching this peg never needs to
+        backtrack. That is, false means we're conservatively sure that
+        once the first character is matched, this peg is certain to
+        match something."""
         abstract
 
 class Recur(Peg):
