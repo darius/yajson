@@ -438,7 +438,6 @@ class OneOf(Peg):
             return branch
         branches = map(gen_branch, self.pegs)
         if context_set:
-            # XXX fill in with self.firsts():
             cs = frozenset(context_set)
             expected = sorted(self.firsts())
             branches.append((cs, cs, ('return expected_one_of (s, z, %s);'
