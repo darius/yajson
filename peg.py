@@ -11,8 +11,8 @@ def gen(root_peg):
     least one JSON-grammar-specific assumption I've let creep in,
     something like the LL(1) grammar condition: that once a sub-peg
     matches the leading character of its input, then its failure to
-    match on further input implies that the whole top-level expression
-    must fail to match. I don't think it'd be *hard* to relax this
+    match overall implies that the whole top-level expression must
+    also fail to match. I don't think it'd be *hard* to relax this
     assumption, but it might pervasively affect the C code scheme.
     Also, the inlining heuristic will produce code-size blowup on some
     grammars; to avoid this we'd need a more conservative definition
