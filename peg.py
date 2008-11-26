@@ -126,7 +126,7 @@ static const %s charset_table[257] = {
         for i, set_i in enumerate(self.sets):
             if charset == set_i:
                 return i
-        assert all(ord(c) < 256 for c in charset)
+        assert all(ord(c) < 256 for c in charset) # XXX relax this restriction
         self.sets.append(frozenset(charset))
         return len(self.sets) - 1
 
