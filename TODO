@@ -1,0 +1,14 @@
+we could optimize out the after-call failure check when calling a
+procedure that can't fail (because it accepts epsilon)
+
+N.B. g0() (the string parser) has a redundant test at the start, because
+it doesn't know that all the calling contexts have the test already
+
+generate this code (in root()) -- or something equivalent:
+    case '-':
+      c = advance (s);
+      // Fall through
+    case '0':
+it's worth about 0.04s on the migrated dataset
+
+check that root and Recur's firstset and has_null are consistent
