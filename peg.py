@@ -272,7 +272,8 @@ class Peg:
     pegs = ()      # Sub-pegs this peg references (none by default)
     def is_trivial(self):
         """A trivial peg has no * or any sub-pegs except literals.
-        It's equivalent to a union of literal strings."""
+        It's equivalent to a set or a sequence of literal characters
+        or else a C code action."""
         return all(isinstance(peg, Literal) for peg in self.pegs)
     def gen(self, context):
         """Return C code (a sequence of statements) for this peg to
