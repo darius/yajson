@@ -28,11 +28,11 @@ def gen(root_peg):
     nameitems = (sorted(names.items(), key=operator.itemgetter(1))
                  + [(root_peg, 'root')])
     protos = '\n'.join(gen_prototype(name) for peg, name in nameitems)
-    char_tests = CharTests()
-    context = Context(names, char_tests, all_chars)
+    char_tables = CharTables()
+    context = Context(names, char_tables, all_chars)
     functions = '\n\n'.join(gen_function(context, peg, name)
                             for peg, name in nameitems)
-    return '\n\n'.join([prelude, char_tests.gen_tables(), 
+    return '\n\n'.join([prelude, char_tables.gen_tables(), 
                         protos, functions, postlude])
 
 all_chars = frozenset(map(chr, range(0, 256)))
@@ -44,10 +44,10 @@ class Context:
     membership tests, and contextual knowledge of what the next input
     character may possibly be at the current point in the code
     (because prior tests rule some characters out)."""
-    def __init__(self, names, char_tests, charset):
-        self.names      = names
-        self.char_tests = char_tests
-        self.charset    = charset
+    def __init__(self, names, char_tables, charset):
+        self.names       = names
+        self.char_tables = char_tables
+        self.charset     = charset
     def gen(self, peg):
         if peg in self.names:
             return gen_call(self.names[peg], peg)
@@ -55,9 +55,9 @@ class Context:
     def get_possible_leading_chars(self):
         return self.charset
     def sprout(self, charset):
-        return Context(self.names, self.char_tests, charset)
+        return Context(self.names, self.char_tables, charset)
     def gen_member_test(self, charset):
-        return gen_member_test(charset, self.charset, self.char_tests)
+        return gen_member_test(charset, self.charset, self.char_tables)
     def gen_advance(self):
         # N.B. The correctness of this depends on two facts:
         #  - We always exit immediately on error.
@@ -65,7 +65,7 @@ class Context:
         #    always an error. We know this because check_for_nulls(root_peg).
         return 'c = *++z;'
 
-def gen_member_test(charset, context_charset, char_tests):
+def gen_member_test(charset, context_charset, char_tables):
     """Return a C expression that's true iff the variable 'c'
     is a member of charset, given we already know c is a 
     member of context_charset."""
@@ -78,8 +78,7 @@ def gen_member_test(charset, context_charset, char_tests):
         c = list(test_set)[0]
         return 'c == %s' % c_char_literal(c)
     elif 1 == len(context_charset - test_set):
-        inverse = context_charset - test_set
-        c = list(inverse)[0]
+        c = list(context_charset - test_set)[0]
         return 'c != %s' % c_char_literal(c)
     elif test_set == frozenset('0123456789') & context_charset:
         return 'isdigit (c)'
@@ -93,7 +92,7 @@ def gen_member_test(charset, context_charset, char_tests):
         # tables, accessing each one is faster.)
         return gen_range_test(get_nonempty_range(test_set))
     else:
-        return char_tests.gen_test(test_set, context_charset)
+        return char_tables.gen_test(test_set, context_charset)
 
 def get_nonempty_range(charset):
     """Return x,y such that charset == set(map(chr, range(x, y))),
@@ -110,7 +109,7 @@ def gen_range_test((lo, hibound)):
     # TODO: generate a > test when hibound == 256
     return '(unsigned)(c - %u) < %u' % (lo, hibound - lo)
     
-class CharTests:
+class CharTables:
     """Generates tests for character-set membership by lookup in a
     constant table, which this object remembers and also generates."""
     def __init__(self):
@@ -326,10 +325,8 @@ class Recur(Peg):
         return True
 
 def gen_call(name, peg):
-    if always_succeeds(peg):
-        return 'z = %s (s, z); c = *z;' % name
-    else:
-        return 'z = %s (s, z); if (!z) return z; c = *z;' % name
+    maybe_fail = '' if always_succeeds(peg) else ' if (!z) return z;'
+    return 'z = %s (s, z);%s c = *z;' % (name, maybe_fail)
 
 def always_succeeds(peg):
     return peg.has_null() and not peg.may_overcommit()
@@ -383,11 +380,9 @@ class Scope(Peg):
     def gen(self, context):
         # XXX needs cleanup, etc.
         return ('{\n  %s\n  %s\n  %s\n}'
-                % (indent('\n'.join(v.gen_init()
-                                    for v in self.variables)),
+                % (indent('\n'.join(v.gen_init() for v in self.variables)),
                    indent(self.peg.gen(context)),
-                   indent('\n'.join(v.gen_finalize()
-                                    for v in self.variables))))
+                   indent('\n'.join(v.gen_finalize() for v in self.variables))))
     def has_null(self):
         return self.peg.has_null()
     def firsts(self):
