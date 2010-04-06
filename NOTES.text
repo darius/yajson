@@ -1,0 +1,23 @@
+Kragen Sitaker on his independent ideas:
+
+I was thinking about computing FIRST sets to speed up PEG parsing as follows
+    maybeempty 'terminal' = false
+    firstbytes 'terminal' = { 'terminal'[0] /* 't' */ }
+    maybeempty nonterminal = maybeempty definition_of nonterminal
+    firstbytes nonterminal = firstbytes definition_of nonterminal
+    maybeempty (concat enation) = maybeempty concat ∧ maybeempty enation
+    firstbytes (concat enation) = firstbytes concat U ( firstbytes enation if maybeempty concat else {} )
+    maybeempty (alt / ernation) = maybeempty alt ∨ maybeempty ernation
+    firstbytes (alt / ernation) = firstbytes alt ∪ firstbytes ernation
+    maybeempty !negated = true
+    firstbytes !negated = complementof firstbytes negated
+    maybeempty kleeneclosure* = true
+    firstbytes kleeneclosure* = firstbytes kleeneclosure
+
+there's what I think is a more precise version (although I only skimmed it) in http://www.romanredz.se/papers/FI2009.pdf
+although for some reason he didn't write about using that for optimization
+
+the FIRST set I compute above is not exact
+I think
+there may be ways that it includes some character that couldn't
+actually occur as the first byte of something matching the expression
